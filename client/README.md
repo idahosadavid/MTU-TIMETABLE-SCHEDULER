@@ -1,16 +1,39 @@
-# React + Vite
+# MTU Timetable Scheduler
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This repository contains a React client (`client/`) and an Express server (`server/`) orchestrated from the workspace root.
 
-Currently, two official plugins are available:
+## Setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+From the repository root:
 
-## React Compiler
+1. Install root tools:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+	```bash
+	npm install
+	```
 
-## Expanding the ESLint configuration
+2. Install client dependencies:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+	```bash
+	npm install --prefix client
+	```
+
+3. Install server dependencies:
+
+	```bash
+	npm install --prefix server
+	```
+
+## Run locally
+
+Start client and server together from the repository root:
+
+```bash
+npm run dev
+```
+
+## Contributor notes
+
+- Do not commit generated artifacts such as `node_modules/`, `dist/`, or logs.
+- The repo root `.gitignore` already excludes these paths.
+- If dependencies are missing locally, reinstall with `npm install` commands instead of committing package contents.

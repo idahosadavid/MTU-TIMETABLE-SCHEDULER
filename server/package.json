@@ -1,0 +1,42 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "smoke:supabase:admin": "node scripts/smoke_supabase_admin_reads.js",
+    "smoke:supabase:admin-writes": "node scripts/smoke_supabase_admin_writes.js",
+    "smoke:supabase:timetables": "node scripts/smoke_supabase_timetables_repo.js",
+    "smoke:supabase:courses-customfields": "node scripts/smoke_supabase_courses_customfields.js",
+    "smoke:supabase:students": "node scripts/smoke_supabase_students_repo.js",
+    "seed:supabase:parity-student": "node scripts/seed_supabase_parity_student.js",
+    "parity:staging": "node scripts/parity_probe_staging.js",
+    "import:sqlite-to-supabase": "node scripts/import_sqlite_to_supabase.js",
+    "verify:data-dry-run": "node scripts/verify_data_dry_run.js",
+    "verify:portal-student": "node scripts/verify_portal_student_carryover.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "portal:sample-session": "node scripts/sample_mtu_portal_session_request.js",
+    "portal:sample-authorize": "node scripts/sample_mtu_portal_authorize_request.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "body-parser": "^2.2.1",
+    "cors": "^2.8.5",
+    "csv-parser": "^3.2.0",
+    "docx": "^9.5.3",
+    "dotenv": "^17.3.1",
+    "express": "^5.1.0",
+    "mammoth": "^1.11.0",
+    "multer": "^2.0.2",
+    "nodemon": "^3.1.11",
+    "pdf-parse": "^2.4.5",
+    "pdfkit": "^0.17.2",
+    "sqlite3": "^5.1.7",
+    "xlsx": "^0.18.5"
+  }
+}

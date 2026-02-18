@@ -1,0 +1,16 @@
+{
+  "name": "lecture-and-exam-timetable-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "dev": "concurrently -k -n server,client -c green,cyan \"npm run dev:server\" \"npm run dev:client\"",
+    "prod:server": "npm run start --prefix server",
+    "prod:client": "npm run build --prefix client && npm run preview --prefix client -- --host",
+    "prod": "concurrently -k -n server,client -c green,cyan \"npm run prod:server\" \"npm run prod:client\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

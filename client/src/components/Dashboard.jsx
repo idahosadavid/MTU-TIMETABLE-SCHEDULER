@@ -1,0 +1,328 @@
+import React, { useEffect, useState } from 'react';
+import CustomFieldsManager from './CustomFieldsManager';
+import API_BASE_URL from '../apiBase';
+import FloatingNotice from './FloatingNotice';
+import getNoticeTimeoutMs from '../noticeTimeout';
+
+const Dashboard = ({ timetableId }) => {
+    const [course, setCourse] = useState({
+        code: '',
+        title: '',
+        department: '',
+        level: '',
+        lecturers: '',
+        units: '',
+        semester: 'First',
+        type: 'Lecture',
+        is_compulsory: false,
+        preferred_day: 'AUTO',
+        preferred_time: 'AUTO',
+        venue: '',
+        duration: 1,
+        student_count: 0,
+        custom_data: {}
+    });
+
+    const [customFields, setCustomFields] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [options, setOptions] = useState({ colleges: [], departments: [], lecturers: [] });
+    const [notice, setNotice] = useState({ message: '', type: 'info' });
+    const [generationScope, setGenerationScope] = useState({
+        scope: 'college',
+        college: '',
+        department: '',
+        level: '',
+        semester: 'First'
+    });
+
+    useEffect(() => {
+        if (!notice.message) {
+            return;
+        }
+
+        const timeoutId = setTimeout(() => setNotice({ message: '', type: 'info' }), getNoticeTimeoutMs(notice.type));
+        return () => clearTimeout(timeoutId);
+    }, [notice]);
+
+    React.useEffect(() => {
+        const fetchOptions = async () => {
+            try {
+                const response = await fetch(`${API_BASE_URL}/options`);
+                const data = await response.json();
+                if (data.data) {
+                    setOptions(data.data);
+                    setGenerationScope(prev => ({
+                        ...prev,
+                        college: data.data.colleges?.[0]?.code || '',
+                        semester: prev.semester || 'First'
+                    }));
+                }
+            } catch (error) {
+                console.error('Failed to fetch options', error);
+            }
+        };
+        fetchOptions();
+    }, []);
+
+    const filteredDepartments = options.departments.filter(d => !generationScope.college || d.college_code === generationScope.college);
+
+    const handleCustomFieldChange = (e, fieldName) => {
+        setCourse({
+            ...course,
+            custom_data: {
+                ...course.custom_data,
+                [fieldName]: e.target.type === 'checkbox' ? e.target.checked : e.target.value
+            }
+        });
+    };
+
+    const handleChange = (e) => {
+        setCourse({ ...course, [e.target.name]: e.target.value });
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        console.log("Submitting Course:", course);
+
+        if (!timetableId) {
+            setNotice({ message: 'No timetable selected.', type: 'error' });
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/courses`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    ...course,
+                    college: generationScope.college || '',
+                    lecturers: course.lecturers.split(',').map(l => l.trim()), // Convert string to array
+                    units: parseInt(course.units),
+                    level: parseInt(course.level),
+                    duration: parseFloat(course.duration), // Send hours, backend converts to minutes
+                    is_compulsory: course.is_compulsory,
+                    student_count: parseInt(course.student_count),
+                    custom_data: course.custom_data,
+                    timetable_id: timetableId
+                }),
+            });
+
+            if (response.ok) {
+                setNotice({ message: 'Course added successfully.', type: 'success' });
+                // Reset form
+                setCourse({
+                    code: '',
+                    title: '',
+                    department: filteredDepartments[0]?.name || '',
+                    level: '',
+                    lecturers: '',
+                    units: '',
+                    semester: 'First',
+                    type: 'Lecture',
+                    is_compulsory: false,
+                    preferred_day: 'AUTO',
+                    preferred_time: 'AUTO',
+                    venue: '',
+                    duration: 1,
+                    student_count: 0,
+                    custom_data: {}
+                });
+            } else {
+                const error = await response.json();
+                setNotice({ message: `Failed to add course: ${error.error}`, type: 'error' });
+            }
+        } catch (err) {
+            console.error(err);
+            setNotice({ message: 'Failed to connect to server.', type: 'error' });
+        }
+    };
+
+    const handleGenerate = async (type) => {
+        if (!timetableId) {
+            setNotice({ message: 'No timetable selected.', type: 'error' });
+            return;
+        }
+
+        setLoading(true);
+        try {
+            const response = await fetch(`${API_BASE_URL}/generate/${type}s`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    timetable_id: timetableId,
+                    scope: generationScope.scope,
+                    department: generationScope.scope === 'department' ? generationScope.department : null,
+                    level: generationScope.level || null,
+                    semester: generationScope.semester || null
+                })
+            });
+            const data = await response.json();
+            setNotice({ message: data.message || 'Generation completed successfully.', type: 'success' });
+        } catch (err) {
+            console.error(err);
+            setNotice({ message: 'Generation failed.', type: 'error' });
+        }
+        setLoading(false);
+    };
+
+    const handleFileUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        if (!timetableId) {
+            setNotice({ message: 'No timetable selected.', type: 'error' });
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('timetable_id', timetableId);
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/upload`, {
+                method: 'POST',
+                body: formData,
+            });
+            const data = await response.json();
+            if (response.ok) {
+                setNotice({ message: data.message || 'Upload completed.', type: 'success' });
+            } else {
+                setNotice({ message: `Upload failed: ${data.error}`, type: 'error' });
+            }
+        } catch (err) {
+            console.error(err);
+            setNotice({ message: 'Failed to upload file.', type: 'error' });
+        }
+    };
+
+    return (
+        <div className="p-6 bg-white rounded-lg shadow-md">
+            <FloatingNotice
+                message={notice.message}
+                type={notice.type}
+                onDismiss={() => setNotice({ message: '', type: 'info' })}
+                stackIndex={0}
+            />
+            <div className="flex justify-between items-center mb-4">
+                <h2 className="text-2xl font-bold">Course Management</h2>
+                <div className="space-x-2">
+                    <button onClick={() => handleGenerate('lecture')} disabled={loading} className={`bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}>Generate Lectures</button>
+                    <button onClick={() => handleGenerate('exam')} disabled={loading} className={`bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}>Generate Exams</button>
+                    <button onClick={() => handleGenerate('test')} disabled={loading} className={`bg-orange-600 text-white px-4 py-2 rounded hover:bg-orange-700 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}>Generate Tests</button>
+                </div>
+            </div>
+
+            <div className="mb-6 p-4 border rounded bg-blue-50">
+                <h3 className="font-semibold mb-3">Generation Scope</h3>
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                    <select value={generationScope.scope} onChange={(e) => setGenerationScope({ ...generationScope, scope: e.target.value })} className="border p-2 rounded">
+                        <option value="college">Entire College</option>
+                        <option value="department">Specific Department</option>
+                    </select>
+                    <select value={generationScope.college} onChange={(e) => setGenerationScope({ ...generationScope, college: e.target.value, department: '' })} className="border p-2 rounded">
+                        <option value="">Select College</option>
+                        {options.colleges.map(college => <option key={college.code} value={college.code}>{college.code}</option>)}
+                    </select>
+                    <select value={generationScope.department} onChange={(e) => setGenerationScope({ ...generationScope, department: e.target.value })} className="border p-2 rounded" disabled={generationScope.scope !== 'department'}>
+                        <option value="">Select Department</option>
+                        {filteredDepartments.map(dept => <option key={dept.code} value={dept.name}>{dept.name}</option>)}
+                    </select>
+                    <select value={generationScope.level} onChange={(e) => setGenerationScope({ ...generationScope, level: e.target.value })} className="border p-2 rounded">
+                        <option value="">All Levels</option>
+                        <option value="100">100</option>
+                        <option value="200">200</option>
+                        <option value="300">300</option>
+                        <option value="400">400</option>
+                        <option value="500">500</option>
+                    </select>
+                    <select value={generationScope.semester} onChange={(e) => setGenerationScope({ ...generationScope, semester: e.target.value })} className="border p-2 rounded">
+                        <option value="First">First Semester</option>
+                        <option value="Second">Second Semester</option>
+                    </select>
+                </div>
+            </div>
+
+            <div className="mb-6 p-4 border border-dashed border-gray-300 rounded bg-gray-50">
+                <h3 className="font-semibold mb-2">Bulk Upload (CSV/Excel/PDF/Word)</h3>
+                <input type="file" accept=".csv, .xlsx, .xls, .pdf, .doc, .docx" onChange={handleFileUpload} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+                <p className="text-xs text-gray-500 mt-1">Headers: Course Code, Course Title, Department, Level, Lecturers, Units, Semester, Type, Compulsory, Preferred Day, Preferred Time, Venue, Duration, Student Count, [Custom Field Labels]</p>
+            </div>
+
+            <CustomFieldsManager onFieldsChange={setCustomFields} />
+
+            <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <input name="code" value={course.code} placeholder="Course Code" onChange={handleChange} className="border p-2 rounded" required />
+                <input name="title" value={course.title} placeholder="Course Title" onChange={handleChange} className="border p-2 rounded" required />
+                <select name="department" value={course.department} onChange={handleChange} className="border p-2 rounded" required>
+                    <option value="">Select Department</option>
+                    {filteredDepartments.map(dept => <option key={dept.code} value={dept.name}>{dept.name}</option>)}
+                </select>
+                <select name="level" value={course.level} onChange={handleChange} className="border p-2 rounded" required>
+                    <option value="">Select Level</option>
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                    <option value="300">300</option>
+                    <option value="400">400</option>
+                    <option value="500">500</option>
+                </select>
+                <input name="lecturers" value={course.lecturers} placeholder="Lecturers (comma separated)" onChange={handleChange} className="border p-2 rounded" list="lecturer-options" />
+                <datalist id="lecturer-options">
+                    {options.lecturers.map(lecturer => <option key={lecturer.name} value={lecturer.name} />)}
+                </datalist>
+                <input name="units" value={course.units} type="number" placeholder="Units" onChange={handleChange} className="border p-2 rounded" required />
+                <select name="semester" value={course.semester} onChange={handleChange} className="border p-2 rounded">
+                    <option value="First">First Semester</option>
+                    <option value="Second">Second Semester</option>
+                </select>
+                <select name="type" value={course.type} onChange={handleChange} className="border p-2 rounded">
+                    <option value="Lecture">Lecture</option>
+                    <option value="Exam">Exam</option>
+                    <option value="Test">Test</option>
+                </select>
+                <select
+                    name="is_compulsory"
+                    value={course.is_compulsory ? 'true' : 'false'}
+                    onChange={(e) => setCourse({ ...course, is_compulsory: e.target.value === 'true' })}
+                    className="border p-2 rounded"
+                >
+                    <option value="true">Compulsory</option>
+                    <option value="false">Elective</option>
+                </select>
+                <input name="preferred_day" value={course.preferred_day} placeholder="Preferred Day (or AUTO)" onChange={handleChange} className="border p-2 rounded" />
+                <input name="preferred_time" value={course.preferred_time} placeholder="Preferred Time (or AUTO)" onChange={handleChange} className="border p-2 rounded" />
+                <input name="venue" value={course.venue} placeholder="Venue" onChange={handleChange} className="border p-2 rounded" />
+                <input name="duration" value={course.duration} type="number" step="0.5" placeholder="Duration (hours)" onChange={handleChange} className="border p-2 rounded" />
+                <input name="student_count" value={course.student_count} type="number" placeholder="Student Count" onChange={handleChange} className="border p-2 rounded" />
+
+                {customFields.map(field => (
+                    <div key={field.id} className="flex flex-col">
+                        <label className="text-sm text-gray-600 mb-1">{field.label}</label>
+                        {field.type === 'boolean' ? (
+                            <input
+                                type="checkbox"
+                                onChange={(e) => handleCustomFieldChange(e, field.name)}
+                                className="border p-2 rounded"
+                            />
+                        ) : (
+                            <input
+                                type={field.type === 'number' ? 'number' : 'text'}
+                                placeholder={field.label}
+                                onChange={(e) => handleCustomFieldChange(e, field.name)}
+                                className="border p-2 rounded"
+                                required={field.required === 1}
+                            />
+                        )}
+                    </div>
+                ))}
+
+                <button type="submit" className="col-span-2 bg-blue-600 text-white p-2 rounded hover:bg-blue-700">
+                    Add Course
+                </button>
+            </form>
+        </div>
+    );
+};
+
+export default Dashboard;

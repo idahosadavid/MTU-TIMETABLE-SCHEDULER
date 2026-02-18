@@ -20,6 +20,7 @@ const Dashboard = ({ timetableId }) => {
         venue: '',
         duration: 1,
         student_count: 0,
+        shared_session_key: '',
         custom_data: {}
     });
 
@@ -47,22 +48,40 @@ const Dashboard = ({ timetableId }) => {
     React.useEffect(() => {
         const fetchOptions = async () => {
             try {
-                const response = await fetch(`${API_BASE_URL}/options`);
-                const data = await response.json();
-                if (data.data) {
-                    setOptions(data.data);
-                    setGenerationScope(prev => ({
-                        ...prev,
-                        college: data.data.colleges?.[0]?.code || '',
-                        semester: prev.semester || 'First'
-                    }));
+                const optionsResponse = await fetch(`${API_BASE_URL}/options`);
+                const optionsData = await optionsResponse.json();
+                if (!optionsData.data) return;
+
+                setOptions(optionsData.data);
+
+                let timetableCollege = '';
+                if (timetableId) {
+                    try {
+                        const timetableResponse = await fetch(`${API_BASE_URL}/timetables/${timetableId}`);
+                        const timetableData = await timetableResponse.json();
+                        timetableCollege = timetableData?.data?.college || '';
+                    } catch (timetableError) {
+                        console.warn('Failed to fetch timetable college for scope sync', timetableError);
+                    }
                 }
+
+                const availableCollegeCodes = (optionsData.data.colleges || []).map(c => c.code);
+                const resolvedCollege = availableCollegeCodes.includes(timetableCollege)
+                    ? timetableCollege
+                    : (optionsData.data.colleges?.[0]?.code || '');
+
+                setGenerationScope(prev => ({
+                    ...prev,
+                    college: resolvedCollege,
+                    department: '',
+                    semester: prev.semester || 'First'
+                }));
             } catch (error) {
                 console.error('Failed to fetch options', error);
             }
         };
         fetchOptions();
-    }, []);
+    }, [timetableId]);
 
     const filteredDepartments = options.departments.filter(d => !generationScope.college || d.college_code === generationScope.college);
 
@@ -105,6 +124,14 @@ const Dashboard = ({ timetableId }) => {
                     is_compulsory: course.is_compulsory,
                     student_count: parseInt(course.student_count),
                     custom_data: course.custom_data,
+                    ...(course.shared_session_key
+                        ? {
+                            custom_data: {
+                                ...(course.custom_data || {}),
+                                shared_session_key: course.shared_session_key
+                            }
+                        }
+                        : {}),
                     timetable_id: timetableId
                 }),
             });
@@ -115,7 +142,7 @@ const Dashboard = ({ timetableId }) => {
                 setCourse({
                     code: '',
                     title: '',
-                    department: filteredDepartments[0]?.name || '',
+                    department: filteredDepartments[0]?.code || '',
                     level: '',
                     lecturers: '',
                     units: '',
@@ -127,6 +154,7 @@ const Dashboard = ({ timetableId }) => {
                     venue: '',
                     duration: 1,
                     student_count: 0,
+                    shared_session_key: '',
                     custom_data: {}
                 });
             } else {
@@ -159,7 +187,19 @@ const Dashboard = ({ timetableId }) => {
                 })
             });
             const data = await response.json();
-            setNotice({ message: data.message || 'Generation completed successfully.', type: 'success' });
+
+            if (!response.ok) {
+                setNotice({ message: data.error || 'Generation failed.', type: 'error' });
+                return;
+            }
+
+            const derivedCount = Array.isArray(data.derived_timetables) ? data.derived_timetables.length : 0;
+            const baseMessage = data.message || 'Generation completed successfully.';
+            const fullMessage = derivedCount > 0
+                ? `${baseMessage} Created/updated ${derivedCount} department/level timetable${derivedCount === 1 ? '' : 's'}.`
+                : baseMessage;
+
+            setNotice({ message: fullMessage, type: 'success' });
         } catch (err) {
             console.error(err);
             setNotice({ message: 'Generation failed.', type: 'error' });
@@ -227,7 +267,7 @@ const Dashboard = ({ timetableId }) => {
                     </select>
                     <select value={generationScope.department} onChange={(e) => setGenerationScope({ ...generationScope, department: e.target.value })} className="border p-2 rounded" disabled={generationScope.scope !== 'department'}>
                         <option value="">Select Department</option>
-                        {filteredDepartments.map(dept => <option key={dept.code} value={dept.name}>{dept.name}</option>)}
+                        {filteredDepartments.map(dept => <option key={dept.code} value={dept.code}>{dept.code} - {dept.name}</option>)}
                     </select>
                     <select value={generationScope.level} onChange={(e) => setGenerationScope({ ...generationScope, level: e.target.value })} className="border p-2 rounded">
                         <option value="">All Levels</option>
@@ -257,7 +297,7 @@ const Dashboard = ({ timetableId }) => {
                 <input name="title" value={course.title} placeholder="Course Title" onChange={handleChange} className="border p-2 rounded" required />
                 <select name="department" value={course.department} onChange={handleChange} className="border p-2 rounded" required>
                     <option value="">Select Department</option>
-                    {filteredDepartments.map(dept => <option key={dept.code} value={dept.name}>{dept.name}</option>)}
+                    {filteredDepartments.map(dept => <option key={dept.code} value={dept.code}>{dept.code} - {dept.name}</option>)}
                 </select>
                 <select name="level" value={course.level} onChange={handleChange} className="border p-2 rounded" required>
                     <option value="">Select Level</option>
@@ -295,6 +335,13 @@ const Dashboard = ({ timetableId }) => {
                 <input name="venue" value={course.venue} placeholder="Venue" onChange={handleChange} className="border p-2 rounded" />
                 <input name="duration" value={course.duration} type="number" step="0.5" placeholder="Duration (hours)" onChange={handleChange} className="border p-2 rounded" />
                 <input name="student_count" value={course.student_count} type="number" placeholder="Student Count" onChange={handleChange} className="border p-2 rounded" />
+                <input
+                    name="shared_session_key"
+                    value={course.shared_session_key}
+                    placeholder="Shared Session Key (e.g. CSC 305/CSE 307)"
+                    onChange={handleChange}
+                    className="border p-2 rounded"
+                />
 
                 {customFields.map(field => (
                     <div key={field.id} className="flex flex-col">

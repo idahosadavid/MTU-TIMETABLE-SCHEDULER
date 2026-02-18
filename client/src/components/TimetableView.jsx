@@ -17,7 +17,6 @@ const TimetableView = () => {
     const [unscheduled, setUnscheduled] = useState([]);
     const [loading, setLoading] = useState(true);
     const [viewMode, setViewMode] = useState('timetable'); // 'timetable' or 'courses'
-    const [showOnlyCompulsory, setShowOnlyCompulsory] = useState(false);
     const [exportFormat, setExportFormat] = useState('excel');
     const [exportDepartment, setExportDepartment] = useState('');
     const [exportLevel, setExportLevel] = useState('');
@@ -201,8 +200,6 @@ const TimetableView = () => {
     };
 
     const departments = Array.from(new Set(scheduled.map(item => item.department).filter(Boolean)));
-    const isCompulsoryCourse = (course) => course.is_compulsory === true || course.is_compulsory === 1 || course.is_compulsory === '1' || course.is_compulsory === 'true';
-    const filteredUnscheduled = showOnlyCompulsory ? unscheduled.filter(isCompulsoryCourse) : unscheduled;
 
     if (loading) {
         return <div className="p-6">Loading timetable...</div>;
@@ -283,14 +280,6 @@ const TimetableView = () => {
                     <option value="500">500</option>
                 </select>
                 <button onClick={handleExport} className="bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700">Export</button>
-                <label className="ml-auto flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                        type="checkbox"
-                        checked={showOnlyCompulsory}
-                        onChange={(e) => setShowOnlyCompulsory(e.target.checked)}
-                    />
-                    Show only compulsory
-                </label>
             </div>
 
             {
@@ -322,8 +311,8 @@ const TimetableView = () => {
                                 {/* Unscheduled Courses Sidebar */}
                                 <div className="w-1/4 bg-gray-50 p-4 rounded shadow h-[calc(100vh-200px)] overflow-y-auto">
                                     <div className="flex justify-between items-center mb-2">
-                                        <h3 className="font-bold text-gray-700">Unscheduled ({filteredUnscheduled.length})</h3>
-                                        {filteredUnscheduled.length > 0 && (
+                                        <h3 className="font-bold text-gray-700">Unscheduled ({unscheduled.length})</h3>
+                                        {unscheduled.length > 0 && (
                                             <button
                                                 onClick={handleClearUnscheduled}
                                                 className="text-xs text-red-600 hover:text-red-800 underline"
@@ -338,7 +327,7 @@ const TimetableView = () => {
                                         onDrop={(e) => handleDrop(e, 'unscheduled', null, null)}
                                         className="min-h-[200px] space-y-2"
                                     >
-                                        {filteredUnscheduled.map((course, index) => (
+                                        {unscheduled.map((course, index) => (
                                             <div
                                                 key={course.id || index}
                                                 draggable
@@ -372,11 +361,7 @@ const TimetableView = () => {
                                                 <tr key={time}>
                                                     <td className="border border-gray-300 p-2 font-bold text-center bg-gray-50">{time}</td>
                                                     {DAYS.map(day => {
-                                                        const slotCourses = scheduled.filter(c => {
-                                                            if (!(c.day === day && c.time === time)) return false;
-                                                            if (!showOnlyCompulsory) return true;
-                                                            return isCompulsoryCourse(c);
-                                                        });
+                                                        const slotCourses = scheduled.filter(c => c.day === day && c.time === time);
                                                         return (
                                                             <td
                                                                 key={`${day}-${time}`}

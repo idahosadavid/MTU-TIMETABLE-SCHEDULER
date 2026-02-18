@@ -44,6 +44,33 @@ const isCompulsoryCourse = (course) => {
         || toBoolean(course.custom_data?.core);
 };
 
+const normalizeDepartmentValue = (value) => String(value || '').trim().toLowerCase();
+
+const matchesDepartmentFilter = (courseDepartment, options = {}) => {
+    if (!options.department) return true;
+
+    const normalizedCourseDepartment = normalizeDepartmentValue(courseDepartment);
+    if (!normalizedCourseDepartment) return false;
+
+    const rawCandidates = Array.isArray(options.departmentAliases)
+        ? [...options.departmentAliases, options.department]
+        : [options.department];
+
+    const candidateSet = new Set(rawCandidates.map(normalizeDepartmentValue).filter(Boolean));
+    return candidateSet.has(normalizedCourseDepartment);
+};
+
+const normalizeSharedSessionKey = (value) => String(value || '').trim().toLowerCase();
+
+const getSharedSessionKey = (course) => {
+    if (!course) return '';
+    return normalizeSharedSessionKey(
+        course.shared_session_key
+        || course.custom_data?.shared_session_key
+        || ''
+    );
+};
+
 // Helper: Fetch all courses (REMOVED - now passed in)
 // const getCourses = () => { ... };
 
@@ -52,6 +79,7 @@ const isCompulsoryCourse = (course) => {
 const hasConflict = (schedule, day, time, duration, course) => {
     const newStart = parseTime(time);
     const newEnd = newStart + duration;
+    const courseSharedSessionKey = getSharedSessionKey(course);
 
     for (const item of schedule) {
         if (item.day !== day) continue;
@@ -61,6 +89,14 @@ const hasConflict = (schedule, day, time, duration, course) => {
 
         // Check time overlap
         if (newStart < itemEnd && newEnd > itemStart) {
+            const itemSharedSessionKey = getSharedSessionKey(item);
+            const isSameSharedSession = Boolean(courseSharedSessionKey)
+                && courseSharedSessionKey === itemSharedSessionKey;
+
+            if (isSameSharedSession) {
+                continue;
+            }
+
             // Check constraints
 
             // 1. Room Conflict
@@ -82,10 +118,17 @@ const hasConflict = (schedule, day, time, duration, course) => {
 const pickVenue = (course, day, time, schedule, venues = []) => {
     if (course.venue && course.venue !== 'Unassigned') return course.venue;
     const requiredCapacity = Number(course.student_count || 0);
+    const courseSharedSessionKey = getSharedSessionKey(course);
     const sortedVenues = [...venues].sort((a, b) => Number(a.capacity || 0) - Number(b.capacity || 0));
     for (const venue of sortedVenues) {
         if (requiredCapacity > 0 && Number(venue.capacity || 0) < requiredCapacity) continue;
-        const venueConflict = schedule.some(item => item.day === day && item.time === time && item.venue === venue.name);
+        const venueConflict = schedule.some(item => {
+            if (item.day !== day || item.time !== time || item.venue !== venue.name) return false;
+            const itemSharedSessionKey = getSharedSessionKey(item);
+            const isSameSharedSession = Boolean(courseSharedSessionKey)
+                && courseSharedSessionKey === itemSharedSessionKey;
+            return !isSameSharedSession;
+        });
         if (!venueConflict) return venue.name;
     }
     return 'Unassigned';
@@ -126,7 +169,7 @@ const generateLectureSchedule = async (courses, options = {}) => {
     console.log("Generating Lecture Schedule...");
     const lectures = courses.filter(c => c.type === 'Lecture');
     const filteredLectures = lectures.filter(c => {
-        if (options.department && c.department !== options.department) return false;
+        if (!matchesDepartmentFilter(c.department, options)) return false;
         if (options.level && Number(c.level) !== Number(options.level)) return false;
         if (options.semester && c.semester !== options.semester) return false;
         if (options.college && c.college && c.college !== options.college) return false;
@@ -244,7 +287,7 @@ const generateLectureSchedule = async (courses, options = {}) => {
 const generateExamSchedule = async (courses, options = {}) => {
     console.log("Generating Exam Schedule...");
     const exams = courses.filter(c => c.type === 'Exam').filter(c => {
-        if (options.department && c.department !== options.department) return false;
+        if (!matchesDepartmentFilter(c.department, options)) return false;
         if (options.level && Number(c.level) !== Number(options.level)) return false;
         if (options.semester && c.semester !== options.semester) return false;
         if (options.college && c.college && c.college !== options.college) return false;
@@ -264,12 +307,19 @@ const generateExamSchedule = async (courses, options = {}) => {
                 // Simplified: Just checking if slot is free for this level/lecturer
                 // We treat slots as discrete blocks
 
-                const conflict = schedule.some(item =>
-                    item.day === day &&
-                    item.time === slot.time &&
-                    (item.venue === course.venue ||
-                        (item.department === course.department && item.level === course.level))
-                );
+                const conflict = schedule.some(item => {
+                    if (item.day !== day || item.time !== slot.time) return false;
+
+                    const itemSharedSessionKey = getSharedSessionKey(item);
+                    const courseSharedSessionKey = getSharedSessionKey(course);
+                    const isSameSharedSession = Boolean(courseSharedSessionKey)
+                        && courseSharedSessionKey === itemSharedSessionKey;
+
+                    if (isSameSharedSession) return false;
+
+                    return item.venue === course.venue
+                        || (item.department === course.department && item.level === course.level);
+                });
 
                 if (!conflict) {
                     schedule.push({
@@ -298,7 +348,7 @@ const generateExamSchedule = async (courses, options = {}) => {
 const generateTestSchedule = async (courses, options = {}) => {
     console.log("Generating Test Schedule...");
     const tests = courses.filter(c => c.type === 'Test').filter(c => {
-        if (options.department && c.department !== options.department) return false;
+        if (!matchesDepartmentFilter(c.department, options)) return false;
         if (options.level && Number(c.level) !== Number(options.level)) return false;
         if (options.semester && c.semester !== options.semester) return false;
         if (options.college && c.college && c.college !== options.college) return false;

@@ -687,10 +687,32 @@ const handleGenerate = async (req, res, generateFn, type) => {
 
         const rules = await getActiveRules();
         const venues = await adminRepo.listVenues();
+        let departmentAliases = [];
+
+        if (scope === 'department' && department) {
+            const allDepartments = await adminRepo.listDepartments();
+            const normalizedSelected = String(department).trim().toLowerCase();
+            const matchedDepartment = (allDepartments || []).find((d) => {
+                const code = String(d.code || '').trim().toLowerCase();
+                const name = String(d.name || '').trim().toLowerCase();
+                return code === normalizedSelected || name === normalizedSelected;
+            });
+
+            if (matchedDepartment) {
+                departmentAliases = Array.from(new Set([
+                    String(department).trim(),
+                    String(matchedDepartment.code || '').trim(),
+                    String(matchedDepartment.name || '').trim()
+                ].filter(Boolean)));
+            } else {
+                departmentAliases = [String(department).trim()];
+            }
+        }
 
         const filterOptions = {
             scope,
             department: scope === 'department' ? department : null,
+            departmentAliases,
             level: level || null,
             semester: semester || timetableRow.semester || null,
             college: timetableRow.college,
@@ -699,10 +721,107 @@ const handleGenerate = async (req, res, generateFn, type) => {
         };
 
         const schedule = await generateFn(courses, filterOptions);
-        const finalData = Array.isArray(schedule) ? JSON.stringify({ scheduled: schedule, unscheduled: [] }) : JSON.stringify(schedule);
+        const generatedData = Array.isArray(schedule)
+            ? { scheduled: schedule, unscheduled: [] }
+            : {
+                scheduled: Array.isArray(schedule?.scheduled) ? schedule.scheduled : [],
+                unscheduled: Array.isArray(schedule?.unscheduled) ? schedule.unscheduled : []
+            };
+        const finalData = JSON.stringify(generatedData);
 
         await timetablesRepo.updateGeneratedDataById(timetable_id, finalData);
-        res.json({ message: `${type} timetable generated`, id: timetable_id, data: JSON.parse(finalData) });
+
+        const derivedTimetables = [];
+        if (scope === 'college') {
+            const normalizeText = (value) => String(value || '').trim();
+            const allGeneratedCourses = [...generatedData.scheduled, ...generatedData.unscheduled];
+            const departmentsInRun = Array.from(new Set(
+                allGeneratedCourses
+                    .map((course) => normalizeText(course.department))
+                    .filter(Boolean)
+            ));
+
+            const existingTimetables = await timetablesRepo.list({ college: timetableRow.college });
+
+            const upsertDerivedTimetable = async (name, dataObject) => {
+                const matching = (existingTimetables || []).find((item) =>
+                    item.type === type
+                    && item.name === name
+                    && item.college === timetableRow.college
+                    && item.academic_session === timetableRow.academic_session
+                    && item.semester === timetableRow.semester
+                );
+
+                const payload = JSON.stringify(dataObject);
+                if (matching) {
+                    await timetablesRepo.updateGeneratedDataById(matching.id, payload);
+                    derivedTimetables.push({ id: matching.id, name, mode: 'updated' });
+                    return;
+                }
+
+                const created = await timetablesRepo.createWithData({
+                    type,
+                    name,
+                    academic_session: timetableRow.academic_session,
+                    semester: timetableRow.semester,
+                    college: timetableRow.college,
+                    status: 'Draft',
+                    data: payload
+                });
+
+                const newId = created?.lastID || created?.id || null;
+                if (newId != null) {
+                    existingTimetables.push({
+                        id: newId,
+                        type,
+                        name,
+                        academic_session: timetableRow.academic_session,
+                        semester: timetableRow.semester,
+                        college: timetableRow.college
+                    });
+                }
+                derivedTimetables.push({ id: newId, name, mode: 'created' });
+            };
+
+            for (const departmentName of departmentsInRun) {
+                const departmentScheduled = generatedData.scheduled.filter(
+                    (course) => normalizeText(course.department) === departmentName
+                );
+                const departmentUnscheduled = generatedData.unscheduled.filter(
+                    (course) => normalizeText(course.department) === departmentName
+                );
+
+                const departmentData = { scheduled: departmentScheduled, unscheduled: departmentUnscheduled };
+                const departmentTimetableName = `${timetableRow.name || `${type} Timetable`} - ${departmentName}`;
+                await upsertDerivedTimetable(departmentTimetableName, departmentData);
+
+                const levelsInDepartment = Array.from(new Set(
+                    [...departmentScheduled, ...departmentUnscheduled]
+                        .map((course) => normalizeText(course.level))
+                        .filter(Boolean)
+                )).sort((a, b) => Number(a) - Number(b));
+
+                for (const levelValue of levelsInDepartment) {
+                    const levelScheduled = departmentScheduled.filter(
+                        (course) => normalizeText(course.level) === levelValue
+                    );
+                    const levelUnscheduled = departmentUnscheduled.filter(
+                        (course) => normalizeText(course.level) === levelValue
+                    );
+
+                    const levelData = { scheduled: levelScheduled, unscheduled: levelUnscheduled };
+                    const levelTimetableName = `${timetableRow.name || `${type} Timetable`} - ${departmentName} - Level ${levelValue}`;
+                    await upsertDerivedTimetable(levelTimetableName, levelData);
+                }
+            }
+        }
+
+        res.json({
+            message: `${type} timetable generated`,
+            id: timetable_id,
+            data: generatedData,
+            derived_timetables: derivedTimetables
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

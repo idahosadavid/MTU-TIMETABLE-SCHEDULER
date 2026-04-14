@@ -18,4 +18,11 @@ const supabaseRepos = {
 
 const repositories = DB_PROVIDER === 'supabase' ? supabaseRepos : sqliteRepos;
 
+// Conditional override for live MTU portal integration
+const STUDENT_DATA_SOURCE = process.env.MTU_STUDENT_DATA_SOURCE || 'db';
+
+if (STUDENT_DATA_SOURCE === 'api') {
+    repositories.studentsRepo = require('./api/studentsRepo');
+}
+
 module.exports = { repositories };

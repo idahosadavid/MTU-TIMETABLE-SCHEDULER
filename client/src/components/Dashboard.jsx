@@ -207,36 +207,6 @@ const Dashboard = ({ timetableId }) => {
         setLoading(false);
     };
 
-    const handleFileUpload = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        if (!timetableId) {
-            setNotice({ message: 'No timetable selected.', type: 'error' });
-            return;
-        }
-
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('timetable_id', timetableId);
-
-        try {
-            const response = await fetch(`${API_BASE_URL}/upload`, {
-                method: 'POST',
-                body: formData,
-            });
-            const data = await response.json();
-            if (response.ok) {
-                setNotice({ message: data.message || 'Upload completed.', type: 'success' });
-            } else {
-                setNotice({ message: `Upload failed: ${data.error}`, type: 'error' });
-            }
-        } catch (err) {
-            console.error(err);
-            setNotice({ message: 'Failed to upload file.', type: 'error' });
-        }
-    };
-
     return (
         <div className="p-6 bg-white rounded-lg shadow-md">
             <FloatingNotice
@@ -282,12 +252,6 @@ const Dashboard = ({ timetableId }) => {
                         <option value="Second">Second Semester</option>
                     </select>
                 </div>
-            </div>
-
-            <div className="mb-6 p-4 border border-dashed border-gray-300 rounded bg-gray-50">
-                <h3 className="font-semibold mb-2">Bulk Upload (CSV/Excel/PDF/Word)</h3>
-                <input type="file" accept=".csv, .xlsx, .xls, .pdf, .doc, .docx" onChange={handleFileUpload} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-                <p className="text-xs text-gray-500 mt-1">Headers: Course Code, Course Title, Department, Level, Lecturers, Units, Semester, Type, Compulsory, Preferred Day, Preferred Time, Venue, Duration, Student Count, [Custom Field Labels]</p>
             </div>
 
             <CustomFieldsManager onFieldsChange={setCustomFields} />

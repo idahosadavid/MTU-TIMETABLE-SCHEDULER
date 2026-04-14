@@ -1,6 +1,10 @@
 {
   "name": "lecture-and-exam-timetable-workspace",
   "private": true,
+  "workspaces": [
+    "client",
+    "server"
+  ],
   "version": "1.0.0",
   "scripts": {
     "dev:server": "npm run dev --prefix server",

@@ -392,11 +392,14 @@ app.get('/api/student/:matric_number/timetable/export', async (req, res) => {
         const baseName = `Timetable_${safeMatric}`;
 
         if (format === 'excel') {
-            const xlsx = require('xlsx');
-            const workbook = xlsx.utils.book_new();
-            const worksheet = xlsx.utils.json_to_sheet(rows);
-            xlsx.utils.book_append_sheet(workbook, worksheet, 'Timetable');
-            const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+            const ExcelJS = require('exceljs');
+            const workbook = new ExcelJS.Workbook();
+            const worksheet = workbook.addWorksheet('Timetable');
+            if (rows.length > 0) {
+                worksheet.columns = Object.keys(rows[0]).map(key => ({ header: key, key }));
+            }
+            worksheet.addRows(rows);
+            const buffer = await workbook.xlsx.writeBuffer();
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             res.setHeader('Content-Disposition', `attachment; filename=${baseName}.xlsx`);
             return res.send(buffer);
@@ -1147,11 +1150,14 @@ app.get('/api/timetables/:id/export', async (req, res) => {
         const baseName = `${timetable.name || 'timetable'}_${department || 'all'}_${level || 'all'}`.replace(/\s+/g, '_');
 
         if (format === 'excel') {
-            const xlsx = require('xlsx');
-            const workbook = xlsx.utils.book_new();
-            const worksheet = xlsx.utils.json_to_sheet(rows);
-            xlsx.utils.book_append_sheet(workbook, worksheet, 'Timetable');
-            const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+            const ExcelJS = require('exceljs');
+            const workbook = new ExcelJS.Workbook();
+            const worksheet = workbook.addWorksheet('Timetable');
+            if (rows.length > 0) {
+                worksheet.columns = Object.keys(rows[0]).map(key => ({ header: key, key }));
+            }
+            worksheet.addRows(rows);
+            const buffer = await workbook.xlsx.writeBuffer();
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             res.setHeader('Content-Disposition', `attachment; filename=${baseName}.xlsx`);
             return res.send(buffer);

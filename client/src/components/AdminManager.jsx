@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import API_BASE_URL from '../apiBase';
+import { adminHeaders } from '../adminAuth';
 import FloatingNotice from './FloatingNotice';
 import getNoticeTimeoutMs from '../noticeTimeout';
 
@@ -60,9 +61,35 @@ const AdminManager = () => {
     };
 
     const postEntity = async (path, payload, resetKey) => {
+        // Client-side validation
+        if (resetKey === 'department' && !payload.college_code) {
+            setNotice({ message: 'Please select a college for the department.', type: 'error' });
+            return;
+        }
+        if (resetKey === 'department' && !payload.code.trim()) {
+            setNotice({ message: 'Department code is required.', type: 'error' });
+            return;
+        }
+        if (resetKey === 'department' && !payload.name.trim()) {
+            setNotice({ message: 'Department name is required.', type: 'error' });
+            return;
+        }
+        if (resetKey === 'college' && (!payload.code.trim() || !payload.name.trim())) {
+            setNotice({ message: 'College code and name are required.', type: 'error' });
+            return;
+        }
+        if (resetKey === 'lecturer' && !payload.name.trim()) {
+            setNotice({ message: 'Lecturer name is required.', type: 'error' });
+            return;
+        }
+        if (resetKey === 'venue' && !payload.name.trim()) {
+            setNotice({ message: 'Venue name is required.', type: 'error' });
+            return;
+        }
+
         const response = await fetch(`${API_BASE_URL}${path}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...adminHeaders() },
             body: JSON.stringify(payload)
         });
 
@@ -78,7 +105,7 @@ const AdminManager = () => {
     };
 
     const deleteEntity = async (path) => {
-        const response = await fetch(`${API_BASE_URL}${path}`, { method: 'DELETE' });
+        const response = await fetch(`${API_BASE_URL}${path}`, { method: 'DELETE', headers: adminHeaders() });
         if (!response.ok) {
             const error = await response.json();
             setNotice({ message: error.error || 'Delete failed', type: 'error' });
@@ -91,7 +118,7 @@ const AdminManager = () => {
     const updateRule = async (rule) => {
         const response = await fetch(`${API_BASE_URL}/admin/rules/${rule.id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...adminHeaders() },
             body: JSON.stringify(rule)
         });
         if (!response.ok) {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import API_BASE_URL from '../apiBase';
+import { adminHeaders } from '../adminAuth';
 import FloatingNotice from './FloatingNotice';
 import getNoticeTimeoutMs from '../noticeTimeout';
 
@@ -43,7 +44,7 @@ const CustomFieldsManager = ({ onFieldsChange }) => {
         try {
             const response = await fetch(`${API_BASE_URL}/custom-fields`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
                 body: JSON.stringify(newField)
             });
             if (response.ok) {
@@ -64,7 +65,8 @@ const CustomFieldsManager = ({ onFieldsChange }) => {
 
         try {
             const response = await fetch(`${API_BASE_URL}/custom-fields/${id}`, {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: adminHeaders()
             });
             if (response.ok) {
                 setNotice({ message: 'Custom field deleted.', type: 'success' });

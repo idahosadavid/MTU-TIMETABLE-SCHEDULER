@@ -3,7 +3,20 @@ import { Link } from 'react-router-dom';
 import API_BASE_URL from '../apiBase';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-const TIMES = ['9:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+const TIMES = ['9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM', '6:00 PM'];
+
+// Convert stored 24-hour time to 12-hour AM/PM for display
+const to12Hour = (t) => {
+    if (!t) return t;
+    if (String(t).includes('AM') || String(t).includes('PM')) return t;
+    const [hStr, mStr] = String(t).split(':');
+    const h = parseInt(hStr, 10);
+    const m = mStr || '00';
+    if (h === 0) return `12:${m} AM`;
+    if (h < 12) return `${h}:${m} AM`;
+    if (h === 12) return `12:${m} PM`;
+    return `${h - 12}:${m} PM`;
+};
 
 const StudentPortal = () => {
     const apiBaseUrl = API_BASE_URL;
@@ -12,6 +25,10 @@ const StudentPortal = () => {
     const [timetable, setTimetable] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [sessionToken, setSessionToken] = useState('');
+    const [exportFormat, setExportFormat] = useState('pdf');
+    const [exportLoading, setExportLoading] = useState(false);
+    const [portalRedirectAttempted, setPortalRedirectAttempted] = useState(false);
 
     const clearPortalQueryParams = () => {
         const cleanUrl = `${window.location.pathname}${window.location.hash || ''}`;
@@ -48,6 +65,7 @@ const StudentPortal = () => {
     const loadPortalSession = async (matric, token) => {
         setLoading(true);
         setError('');
+        setSessionToken(token);
 
         try {
             const timetableRes = await fetch(`${apiBaseUrl}/student/${encodeURIComponent(matric)}/timetable`, {
@@ -101,97 +119,99 @@ const StudentPortal = () => {
         if (matricFromPortal && tokenFromPortal) {
             clearPortalQueryParams();
             loadPortalSession(matricFromPortal, tokenFromPortal);
+            return;
         }
+
+        // No portal redirect parameters — mark that we've checked
+        setPortalRedirectAttempted(true);
     }, [apiBaseUrl]);
 
-    const handleLogin = async (e) => {
-        e.preventDefault();
-        setLoading(true);
-        setError('');
 
-        try {
-            // 1. Verify Login
-            const loginRes = await fetch(`${apiBaseUrl}/student/login`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ matric_number: matricNumber })
-            });
-
-            const contentType = loginRes.headers.get("content-type");
-            if (!contentType || !contentType.includes("application/json")) {
-                const text = await loginRes.text();
-                console.error("Non-JSON response:", text);
-                throw new Error("Server returned an invalid response (not JSON). Please check if the backend is running.");
-            }
-
-            const loginData = await loginRes.json();
-
-            if (!loginRes.ok) {
-                throw new Error(loginData.error || 'Login failed');
-            }
-
-            setStudent(loginData.data);
-
-            // 2. Fetch Timetable
-            const timetableRes = await fetch(`${apiBaseUrl}/student/${encodeURIComponent(matricNumber)}/timetable`);
-
-            const ttContentType = timetableRes.headers.get("content-type");
-            if (!ttContentType || !ttContentType.includes("application/json")) {
-                console.error("Non-JSON response for timetable");
-                throw new Error("Failed to fetch timetable: Server returned invalid response.");
-            }
-
-            const timetableData = await timetableRes.json();
-
-            if (!timetableRes.ok) {
-                throw new Error(timetableData.error || 'Failed to fetch timetable');
-            }
-
-            setTimetable(timetableData.timetable);
-        } catch (err) {
-            console.error(err);
-            setError(err.message);
-            setStudent(null);
-            setTimetable(null);
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const handleLogout = () => {
         setStudent(null);
         setTimetable(null);
         setMatricNumber('');
+        setSessionToken('');
+    };
+
+    const handleExport = async () => {
+        if (!matricNumber) return;
+        setExportLoading(true);
+        try {
+            const response = await fetch(`${apiBaseUrl}/student/${encodeURIComponent(matricNumber)}/timetable/export?format=${exportFormat}`, {
+                headers: sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Export failed');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            const ext = exportFormat === 'word' ? 'docx' : exportFormat === 'pdf' ? 'pdf' : 'xlsx';
+            link.href = url;
+            const safeMatric = matricNumber.replace(/[\/\\]/g, '_');
+            link.download = `Timetable_${safeMatric}.${ext}`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('Export error:', err);
+            alert(err.message);
+        } finally {
+            setExportLoading(false);
+        }
     };
 
     if (!student) {
+        // Still waiting for the useEffect portal-redirect check to complete
+        if (!portalRedirectAttempted && !error) {
+            return (
+                <div className="flex items-center justify-center min-h-[50vh]">
+                    <div className="text-center text-gray-500">Checking portal session...</div>
+                </div>
+            );
+        }
+
         return (
-            <div className="flex flex-col items-center justify-center min-h-[50vh]">
-                <div className="bg-white p-8 rounded shadow-md w-full max-w-md">
-                    <h2 className="text-2xl font-bold mb-6 text-center text-blue-900">Student Portal Login</h2>
-                    <form onSubmit={handleLogin} className="space-y-4">
-                        <div>
-                            <label className="block text-gray-700 mb-2">Matric Number</label>
-                            <input
-                                type="text"
-                                value={matricNumber}
-                                onChange={(e) => setMatricNumber(e.target.value)}
-                                className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                placeholder="e.g. MTU/2023/001"
-                                required
-                            />
+            <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
+                <div className="bg-white p-10 rounded-2xl shadow-lg w-full max-w-md text-center">
+                    {/* MTU crest / icon */}
+                    <div className="flex justify-center mb-6">
+                        <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center">
+                            <svg className="w-8 h-8 text-blue-700" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l9-5-9-5-9 5 9 5z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l6.16-3.422A12.083 12.083 0 0121 21H3a12.083 12.083 0 012.84-10.422L12 14z" />
+                            </svg>
                         </div>
-                        {error && <div className="text-red-500 text-sm">{error}</div>}
-                        <button
-                            type="submit"
-                            disabled={loading}
-                            className="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700 disabled:bg-blue-300"
-                        >
-                            {loading ? 'Verifying...' : 'View Timetable'}
-                        </button>
-                    </form>
-                    <div className="mt-4 text-center">
-                        <Link to="/" className="text-sm text-gray-500 hover:underline">Back to Main Menu</Link>
+                    </div>
+
+                    <h2 className="text-2xl font-bold text-blue-900 mb-2">MTU Student Timetable</h2>
+                    <p className="text-gray-500 text-sm mb-6">
+                        Your personalised timetable is accessed securely through the MTU Student Portal.
+                    </p>
+
+                    {error && (
+                        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-5">
+                            {error}
+                        </div>
+                    )}
+
+                    {loading ? (
+                        <div className="text-blue-700 font-medium animate-pulse">Loading your timetable...</div>
+                    ) : (
+                        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+                            <p className="font-semibold mb-1">How to access your timetable</p>
+                            <p>Log in to the <strong>MTU Student Portal</strong> and click <strong>"View My Timetable"</strong>. You will be redirected here automatically.</p>
+                        </div>
+                    )}
+
+                    <div className="mt-6">
+                        <Link to="/" className="text-sm text-gray-400 hover:text-gray-600 underline">Back to Main Menu</Link>
                     </div>
                 </div>
             </div>
@@ -217,7 +237,30 @@ const StudentPortal = () => {
             </div>
 
             <div className="bg-white p-4 rounded shadow overflow-x-auto">
-                <h3 className="text-xl font-bold mb-4 text-gray-800">My Personal Timetable</h3>
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-bold text-gray-800">My Personal Timetable</h3>
+                    
+                    <div className="flex items-center gap-2">
+                        <span className="font-semibold text-sm text-gray-700">Download:</span>
+                        <select 
+                            value={exportFormat} 
+                            onChange={(e) => setExportFormat(e.target.value)} 
+                            className="border p-2 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            disabled={exportLoading}
+                        >
+                            <option value="excel">Excel</option>
+                            <option value="pdf">PDF</option>
+                            <option value="word">Word</option>
+                        </select>
+                        <button 
+                            onClick={handleExport} 
+                            className="bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700 disabled:bg-blue-300 transition-colors"
+                            disabled={exportLoading}
+                        >
+                            {exportLoading ? 'Exporting...' : 'Export'}
+                        </button>
+                    </div>
+                </div>
                 <table className="min-w-full border-collapse border border-gray-300">
                     <thead>
                         <tr>
@@ -232,7 +275,7 @@ const StudentPortal = () => {
                             <tr key={time}>
                                 <td className="border border-gray-300 p-2 font-bold text-center bg-gray-50">{time}</td>
                                 {DAYS.map(day => {
-                                    const slotCourses = scheduled.filter(c => c.day === day && c.time === time);
+                                    const slotCourses = scheduled.filter(c => c.day === day && to12Hour(c.time) === time);
                                     return (
                                         <td key={`${day}-${time}`} className="border border-gray-300 p-1 h-24 align-top">
                                             {slotCourses.map((course, idx) => (

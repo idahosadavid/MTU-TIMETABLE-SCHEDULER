@@ -12,12 +12,19 @@ const toJsonValue = (value, fallback) => {
 	return value;
 };
 
-const normalizeRowForGeneration = (row) => ({
-	...row,
-	is_compulsory: row.is_compulsory === true || row.is_compulsory === 1 || row.is_compulsory === '1' || row.is_compulsory === 'true',
-	lecturers: toJsonValue(row.lecturers, []),
-	custom_data: toJsonValue(row.custom_data, {})
-});
+const normalizeRowForGeneration = (row) => {
+	const custom_data = toJsonValue(row.custom_data, {});
+	// is_compulsory may be stored in custom_data if the DB column doesn't exist
+	const is_compulsory =
+		row.is_compulsory === true || row.is_compulsory === 1 || row.is_compulsory === '1' || row.is_compulsory === 'true'
+		|| custom_data.is_compulsory === true || custom_data.is_compulsory === 1;
+	return {
+		...row,
+		is_compulsory,
+		lecturers: toJsonValue(row.lecturers, []),
+		custom_data
+	};
+};
 
 const listByTimetableId = async (timetableId) => {
 	const supabase = getSupabaseClient();
@@ -45,6 +52,13 @@ const list = async ({ timetableId } = {}) => {
 
 const create = async (course) => {
 	const supabase = getSupabaseClient();
+	const isCompulsory = course.is_compulsory === true || course.is_compulsory === 1 || course.is_compulsory === '1' || course.is_compulsory === 'true';
+	// Merge is_compulsory into custom_data as a fallback since the Supabase column may not exist
+	const custom_data = {
+		...(course.custom_data || {}),
+		is_compulsory: isCompulsory
+	};
+
 	const payload = {
 		code: course.code,
 		title: course.title,
@@ -55,13 +69,12 @@ const create = async (course) => {
 		units: course.units,
 		semester: course.semester,
 		type: course.type,
-		is_compulsory: course.is_compulsory === true || course.is_compulsory === 1 || course.is_compulsory === '1' || course.is_compulsory === 'true',
 		preferred_day: course.preferred_day || 'AUTO',
 		preferred_time: course.preferred_time || 'AUTO',
 		venue: course.venue || '',
 		duration: course.duration,
 		student_count: course.student_count || 0,
-		custom_data: course.custom_data || {},
+		custom_data,
 		timetable_id: course.timetable_id
 	};
 

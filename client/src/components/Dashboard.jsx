@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import CustomFieldsManager from './CustomFieldsManager';
 import API_BASE_URL from '../apiBase';
+import { adminHeaders } from '../adminAuth';
 import FloatingNotice from './FloatingNotice';
 import getNoticeTimeoutMs from '../noticeTimeout';
 
@@ -113,6 +114,7 @@ const Dashboard = ({ timetableId }) => {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    ...adminHeaders()
                 },
                 body: JSON.stringify({
                     ...course,
@@ -177,7 +179,7 @@ const Dashboard = ({ timetableId }) => {
         try {
             const response = await fetch(`${API_BASE_URL}/generate/${type}s`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
                 body: JSON.stringify({
                     timetable_id: timetableId,
                     scope: generationScope.scope,

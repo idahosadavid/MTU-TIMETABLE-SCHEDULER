@@ -102,6 +102,7 @@ const deleteCollege = async (id) => {
 };
 
 const createDepartment = async ({ code, name, college_code, is_active = 1 }) => {
+    if (!college_code) throw new Error('A college must be selected for the department.');
     const supabase = getSupabaseClient();
     const payload = { code, name, college_code, is_active: !!is_active };
     const { data, error } = await supabase
@@ -173,7 +174,7 @@ const deleteLecturer = async (id) => {
 
 const createVenue = async ({ name, college_code = null, capacity = 0 }) => {
     const supabase = getSupabaseClient();
-    const payload = { name, college_code, capacity: Number(capacity || 0) };
+    const payload = { name, college_code: college_code || null, capacity: Number(capacity || 0) };
     const { data, error } = await supabase
         .from('venues')
         .insert([payload])

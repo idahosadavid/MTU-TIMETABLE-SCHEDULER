@@ -2,11 +2,38 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import Dashboard from './Dashboard';
 import API_BASE_URL from '../apiBase';
+import { adminHeaders } from '../adminAuth';
 import FloatingNotice from './FloatingNotice';
 import getNoticeTimeoutMs from '../noticeTimeout';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-const TIMES = ['9:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+const TIMES = ['9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM', '6:00 PM'];
+
+// Convert stored 24-hour time (e.g. '13:00') to 12-hour AM/PM (e.g. '1:00 PM')
+const to12Hour = (t) => {
+    if (!t) return t;
+    if (String(t).includes('AM') || String(t).includes('PM')) return t;
+    const [hStr, mStr] = String(t).split(':');
+    const h = parseInt(hStr, 10);
+    const m = mStr || '00';
+    if (h === 0) return `12:${m} AM`;
+    if (h < 12) return `${h}:${m} AM`;
+    if (h === 12) return `12:${m} PM`;
+    return `${h - 12}:${m} PM`;
+};
+
+// Convert 12-hour AM/PM display label back to 24-hour (e.g. '1:00 PM' -> '13:00')
+const to24Hour = (t) => {
+    if (!t) return t;
+    if (!String(t).includes('AM') && !String(t).includes('PM')) return t; // Already 24h
+    const isPM = String(t).includes('PM');
+    const timePart = String(t).replace(' AM', '').replace(' PM', '');
+    const [hStr, mStr = '00'] = timePart.split(':');
+    let h = parseInt(hStr, 10);
+    if (isPM && h !== 12) h += 12;
+    if (!isPM && h === 12) h = 0;
+    return `${h}:${mStr}`;
+};
 
 
 const TimetableView = () => {
@@ -103,6 +130,29 @@ const TimetableView = () => {
         e.preventDefault();
     };
 
+    const handleDropToUnscheduled = async (e) => {
+        e.preventDefault();
+        const course = JSON.parse(e.dataTransfer.getData('course'));
+        const source = e.dataTransfer.getData('source');
+        if (source !== 'scheduled') return; // Already unscheduled, nothing to do
+
+        const newScheduled = scheduled.filter(c => c.code !== course.code || c.day !== course.day || c.time !== course.time);
+        const newUnscheduled = [...unscheduled, { ...course, day: undefined, time: undefined }];
+        setScheduled(newScheduled);
+        setUnscheduled(newUnscheduled);
+        suppressNextNotificationRef.current = true;
+        try {
+            await fetch(`${API_BASE_URL}/timetables/${timetableId}/save`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                body: JSON.stringify({ scheduled: newScheduled, unscheduled: newUnscheduled })
+            });
+            setActionNotice({ message: 'Course moved to unscheduled.', type: 'success' });
+        } catch (err) {
+            console.error('Error saving move to unscheduled:', err);
+        }
+    };
+
     const handleDrop = async (e, day, time) => {
         e.preventDefault();
         const course = JSON.parse(e.dataTransfer.getData('course'));
@@ -112,7 +162,7 @@ const TimetableView = () => {
         try {
             const response = await fetch(`${API_BASE_URL}/timetables/validate`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
                 body: JSON.stringify({ schedule: scheduled, course, day, time })
             });
             const result = await response.json();
@@ -139,7 +189,7 @@ const TimetableView = () => {
                 // Save changes
                 await fetch(`${API_BASE_URL}/timetables/${timetableId}/save`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', ...adminHeaders() },
                     body: JSON.stringify({ scheduled: newScheduled, unscheduled: newUnscheduled })
                 });
                 setActionNotice({ message: 'Course moved successfully.', type: 'success' });
@@ -162,7 +212,8 @@ const TimetableView = () => {
             // Use dedicated endpoint to ensure we don't accidentally wipe scheduled courses
             suppressNextNotificationRef.current = true;
             await fetch(`${API_BASE_URL}/timetables/${timetableId}/clear-unscheduled`, {
-                method: 'POST'
+                method: 'POST',
+                headers: adminHeaders()
             });
             setActionNotice({ message: 'Unscheduled list cleared.', type: 'success' });
         } catch (err) {
@@ -324,7 +375,7 @@ const TimetableView = () => {
                                     </div>
                                     <div
                                         onDragOver={handleDragOver}
-                                        onDrop={(e) => handleDrop(e, 'unscheduled', null, null)}
+                                        onDrop={handleDropToUnscheduled}
                                         className="min-h-[200px] space-y-2"
                                     >
                                         {unscheduled.map((course, index) => (
@@ -361,13 +412,13 @@ const TimetableView = () => {
                                                 <tr key={time}>
                                                     <td className="border border-gray-300 p-2 font-bold text-center bg-gray-50">{time}</td>
                                                     {DAYS.map(day => {
-                                                        const slotCourses = scheduled.filter(c => c.day === day && c.time === time);
+                                                        const slotCourses = scheduled.filter(c => c.day === day && to12Hour(c.time) === time);
                                                         return (
                                                             <td
                                                                 key={`${day}-${time}`}
                                                                 className="border border-gray-300 p-1 h-24 align-top relative"
                                                                 onDragOver={handleDragOver}
-                                                                onDrop={(e) => handleDrop(e, 'scheduled', day, time)}
+                                                                onDrop={(e) => handleDrop(e, 'scheduled', day, to24Hour(time))}
                                                             >
                                                                 {slotCourses.map((course, idx) => (
                                                                     <div
@@ -396,7 +447,7 @@ const TimetableView = () => {
                                                                                 // Save immediately
                                                                                 fetch(`${API_BASE_URL}/timetables/${timetableId}/save`, {
                                                                                     method: 'POST',
-                                                                                    headers: { 'Content-Type': 'application/json' },
+                                                                                    headers: { 'Content-Type': 'application/json', ...adminHeaders() },
                                                                                     body: JSON.stringify({ scheduled: newScheduled, unscheduled: newUnscheduled })
                                                                                 });
                                                                             }}

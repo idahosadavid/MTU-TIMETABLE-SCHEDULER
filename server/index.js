@@ -8,6 +8,7 @@ const { repositories } = require('./data/repositories');
 const path = require('path');
 const { createStudentSessionToken, verifyStudentSessionToken, DEFAULT_TTL_SECONDS } = require('./security/studentSession');
 const { issuePortalAuthCode, consumePortalAuthCode } = require('./security/portalAuthCodeStore');
+const { provisionStudentFromPortal } = require('./services/portalStudentProvisioner');
 
 const { adminRepo, customFieldsRepo, coursesRepo, timetablesRepo, studentsRepo } = repositories;
 
@@ -15,6 +16,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const STUDENT_AUTH_MODE = process.env.MTU_STUDENT_AUTH_MODE || 'legacy';
 const MTU_PORTAL_SHARED_SECRET = process.env.MTU_PORTAL_SHARED_SECRET || '';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
 const PORTAL_AUTH_CODE_TTL_SECONDS = Number(process.env.MTU_PORTAL_CODE_TTL_SECONDS) > 0
     ? Number(process.env.MTU_PORTAL_CODE_TTL_SECONDS)
     : 120;
@@ -53,6 +55,18 @@ const getActiveRules = async () => {
     return rules;
 };
 
+const to12HourForExport = (t) => {
+    if (!t) return t;
+    if (String(t).includes('AM') || String(t).includes('PM')) return t;
+    const [hStr, mStr] = String(t).split(':');
+    const h = parseInt(hStr, 10);
+    const m = mStr || '00';
+    if (h === 0) return `12:${m} AM`;
+    if (h < 12) return `${h}:${m} AM`;
+    if (h === 12) return `12:${m} PM`;
+    return `${h - 12}:${m} PM`;
+};
+
 const flattenForExport = (courses) => courses.map(course => ({
     code: course.code,
     title: course.title,
@@ -61,7 +75,7 @@ const flattenForExport = (courses) => courses.map(course => ({
     level: course.level,
     semester: course.semester,
     day: course.day || '',
-    time: course.time || '',
+    time: to12HourForExport(course.time) || '',
     venue: course.venue || '',
     units: course.units,
     duration_minutes: course.duration,
@@ -78,27 +92,11 @@ const withVenueSeatsAlias = (venue) => ({
     seats: Number(venue?.capacity || 0)
 });
 
-const handleStudentLogin = (req, res, options = {}) => {
-    const { debug = false } = options;
-    const { matric_number } = req.body;
-
-    if (debug) {
-        console.log('POST /api/student/login hit', req.body);
-    }
-
-    studentsRepo.getByMatric(matric_number)
-        .then((row) => {
-            if (row) {
-                if (debug) console.log('Student found:', row.name);
-                return res.json({ data: row });
-            }
-            if (debug) console.log('Student not found for matric:', matric_number);
-            return res.status(404).json({ error: 'Student not found' });
-        })
-        .catch((err) => {
-            if (debug) console.error('Database error in login:', err);
-            return res.status(500).json({ error: err.message });
-        });
+// Manual login is disabled — access must be via MTU Portal SSO redirect.
+const handleStudentLogin = (req, res) => {
+    return res.status(403).json({
+        error: 'Direct login is not supported. Please access your timetable through the MTU Student Portal.'
+    });
 };
 
 const getBearerToken = (authorizationHeader = '') => {
@@ -113,6 +111,18 @@ const getBearerToken = (authorizationHeader = '') => {
 };
 
 const isPortalTokenMode = () => STUDENT_AUTH_MODE === 'portal-token';
+
+// --- Admin RBAC Middleware ---
+const requireAdmin = (req, res, next) => {
+    if (!ADMIN_API_KEY) {
+        return res.status(503).json({ error: 'Admin access is not configured. Set ADMIN_API_KEY in .env.' });
+    }
+    const provided = req.headers['x-admin-key'];
+    if (!provided || provided !== ADMIN_API_KEY) {
+        return res.status(401).json({ error: 'Unauthorized. Valid admin key required.' });
+    }
+    next();
+};
 
 const assertPortalTokenAccess = (req, res) => {
     if (!isPortalTokenMode()) {
@@ -148,9 +158,14 @@ const assertPortalTokenAccess = (req, res) => {
 };
 
 const getStudentTimetablePayload = async (matric_number) => {
-    const student = await studentsRepo.getByMatric(matric_number);
+    // Try local DB first; fall back to JIT provisioning from MTU Portal API
+    let student = await studentsRepo.getByMatric(matric_number);
     if (!student) {
-        const error = new Error('Student not found');
+        console.log(`[Timetable] Student ${matric_number} not in local DB — attempting JIT provisioning...`);
+        student = await provisionStudentFromPortal(matric_number, studentsRepo);
+    }
+    if (!student) {
+        const error = new Error('Student not found. Please access your timetable through the MTU Student Portal.');
         error.status = 404;
         throw error;
     }
@@ -234,6 +249,11 @@ const handleStudentTimetable = (req, res) => {
         });
 };
 
+// Admin auth ping — lightweight endpoint to validate the admin key
+app.get('/api/admin/ping', requireAdmin, (req, res) => {
+    res.json({ ok: true });
+});
+
 console.log('Registering Student API Routes...');
 
 // --- Student API ---
@@ -252,9 +272,13 @@ app.post('/api/student/portal/session', async (req, res) => {
     const ttl = Number(ttl_seconds) > 0 ? Number(ttl_seconds) : DEFAULT_TTL_SECONDS;
 
     try {
-        const student = await studentsRepo.getByMatric(matric_number);
+        let student = await studentsRepo.getByMatric(matric_number);
         if (!student) {
-            return res.status(404).json({ error: 'Student not found' });
+            console.log(`[Portal Session] JIT provisioning for ${matric_number}...`);
+            student = await provisionStudentFromPortal(matric_number, studentsRepo);
+        }
+        if (!student) {
+            return res.status(404).json({ error: 'Student not found in portal. Ensure the student is registered on the MTU Portal.' });
         }
 
         const token = createStudentSessionToken(matric_number, ttl);
@@ -284,9 +308,13 @@ app.post('/api/student/portal/authorize', async (req, res) => {
     }
 
     try {
-        const student = await studentsRepo.getByMatric(matric_number);
+        let student = await studentsRepo.getByMatric(matric_number);
         if (!student) {
-            return res.status(404).json({ error: 'Student not found' });
+            console.log(`[Portal Authorize] JIT provisioning for ${matric_number}...`);
+            student = await provisionStudentFromPortal(matric_number, studentsRepo);
+        }
+        if (!student) {
+            return res.status(404).json({ error: 'Student not found in portal. Ensure the student is registered on the MTU Portal.' });
         }
 
         const { code, exp } = issuePortalAuthCode(matric_number, PORTAL_AUTH_CODE_TTL_SECONDS);
@@ -313,9 +341,13 @@ app.post('/api/student/portal/exchange', async (req, res) => {
     }
 
     try {
-        const student = await studentsRepo.getByMatric(payload.matric_number);
+        let student = await studentsRepo.getByMatric(payload.matric_number);
         if (!student) {
-            return res.status(404).json({ error: 'Student not found' });
+            console.log(`[Portal Exchange] JIT provisioning for ${payload.matric_number}...`);
+            student = await provisionStudentFromPortal(payload.matric_number, studentsRepo);
+        }
+        if (!student) {
+            return res.status(404).json({ error: 'Student not found in portal. Ensure the student is registered on the MTU Portal.' });
         }
 
         const token = createStudentSessionToken(payload.matric_number, DEFAULT_TTL_SECONDS);
@@ -334,17 +366,93 @@ app.post('/api/student/portal/exchange', async (req, res) => {
     }
 });
 
-// Student Login (Verify Matric Number)
-app.post('/api/student/login', (req, res) => {
-    if (isPortalTokenMode()) {
-        return res.status(403).json({ error: 'Direct student login is disabled in portal-token mode' });
-    }
-    handleStudentLogin(req, res, { debug: true });
-});
+// Student Login — disabled. Access is portal-SSO only.
+app.post('/api/student/login', (req, res) => handleStudentLogin(req, res));
 
 // Get Student Timetable
 app.get('/api/student/:matric_number/timetable', (req, res) => {
     handleStudentTimetable(req, res);
+});
+
+// Export Student Timetable (Excel, PDF, Word)
+app.get('/api/student/:matric_number/timetable/export', async (req, res) => {
+    const { matric_number } = req.params;
+    const { format = 'excel' } = req.query;
+
+    if (!assertPortalTokenAccess(req, res)) {
+        return;
+    }
+
+    try {
+        const payload = await getStudentTimetablePayload(matric_number);
+        const scheduled = payload.timetable.data.scheduled;
+        const rows = flattenForExport(scheduled);
+        // Replace slash with underscore in matric for filename
+        const safeMatric = String(matric_number).replace(/[\/\\]/g, '_');
+        const baseName = `Timetable_${safeMatric}`;
+
+        if (format === 'excel') {
+            const xlsx = require('xlsx');
+            const workbook = xlsx.utils.book_new();
+            const worksheet = xlsx.utils.json_to_sheet(rows);
+            xlsx.utils.book_append_sheet(workbook, worksheet, 'Timetable');
+            const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            res.setHeader('Content-Disposition', `attachment; filename=${baseName}.xlsx`);
+            return res.send(buffer);
+        }
+
+        if (format === 'pdf') {
+            const PDFDocument = require('pdfkit');
+            const doc = new PDFDocument({ margin: 30, size: 'A4' });
+            const chunks = [];
+            doc.on('data', chunk => chunks.push(chunk));
+            doc.on('end', () => {
+                const pdfBuffer = Buffer.concat(chunks);
+                res.setHeader('Content-Type', 'application/pdf');
+                res.setHeader('Content-Disposition', `attachment; filename=${baseName}.pdf`);
+                res.send(pdfBuffer);
+            });
+
+            doc.fontSize(16).text(`Personal Timetable: ${matric_number}`, { underline: true });
+            doc.moveDown(0.5);
+            doc.fontSize(10).text(`Name: ${payload.student.name || 'Student'}`);
+            doc.text(`Department: ${payload.student.department || 'N/A'} | Level: ${payload.student.level || 'N/A'}`);
+            doc.moveDown(1);
+
+            rows.forEach((row, index) => {
+                doc.fontSize(9).text(`${index + 1}. ${row.code} - ${row.title} | ${row.day} ${row.time} | ${row.venue}`);
+            });
+            doc.end();
+            return;
+        }
+
+        if (format === 'word') {
+            const { Document, Packer, Paragraph, TextRun } = require('docx');
+            const paragraphs = [
+                new Paragraph({
+                    children: [new TextRun({ text: `Personal Timetable: ${matric_number}`, bold: true, size: 28 })]
+                }),
+                new Paragraph(`Name: ${payload.student.name || 'Student'}`),
+                new Paragraph(`Department: ${payload.student.department || 'N/A'} | Level: ${payload.student.level || 'N/A'}`),
+                new Paragraph(' '),
+                ...rows.map((row, index) => new Paragraph(`${index + 1}. ${row.code} - ${row.title} | ${row.day} ${row.time} | ${row.venue}`))
+            ];
+
+            const doc = new Document({
+                sections: [{ properties: {}, children: paragraphs }]
+            });
+            const buffer = await Packer.toBuffer(doc);
+            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+            res.setHeader('Content-Disposition', `attachment; filename=${baseName}.docx`);
+            return res.send(buffer);
+        }
+
+        return res.status(400).json({ error: 'Unsupported format. Use excel, pdf, or word.' });
+    } catch (err) {
+        const status = err.status || 500;
+        return res.status(status).json({ error: err.message });
+    }
 });
 
 // Routes
@@ -362,7 +470,7 @@ app.get('/api/custom-fields', (req, res) => {
 });
 
 // Add a new custom field
-app.post('/api/custom-fields', (req, res) => {
+app.post('/api/custom-fields', requireAdmin, (req, res) => {
     const { name, label, type, required } = req.body;
     customFieldsRepo.create({ name, label, type, required })
         .then(result => res.json({ message: 'Custom field added', id: result.id }))
@@ -370,7 +478,7 @@ app.post('/api/custom-fields', (req, res) => {
 });
 
 // Delete a custom field
-app.delete('/api/custom-fields/:id', (req, res) => {
+app.delete('/api/custom-fields/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     customFieldsRepo.deleteById(id)
         .then(() => res.json({ message: 'Custom field deleted' }))
@@ -385,14 +493,14 @@ app.get('/api/admin/colleges', (req, res) => {
         .catch(err => res.status(500).json({ error: err.message }));
 });
 
-app.post('/api/admin/colleges', (req, res) => {
+app.post('/api/admin/colleges', requireAdmin, (req, res) => {
     const { code, name, is_active = 1 } = req.body;
     adminRepo.createCollege({ code, name, is_active })
         .then(result => res.json({ message: 'College added', id: result.lastID }))
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
-app.put('/api/admin/colleges/:id', (req, res) => {
+app.put('/api/admin/colleges/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { code, name, is_active = 1 } = req.body;
     adminRepo.updateCollege(id, { code, name, is_active })
@@ -400,7 +508,7 @@ app.put('/api/admin/colleges/:id', (req, res) => {
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
-app.delete('/api/admin/colleges/:id', (req, res) => {
+app.delete('/api/admin/colleges/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     adminRepo.deleteCollege(id)
         .then(() => res.json({ message: 'College deleted' }))
@@ -414,14 +522,14 @@ app.get('/api/admin/departments', (req, res) => {
         .catch(err => res.status(500).json({ error: err.message }));
 });
 
-app.post('/api/admin/departments', (req, res) => {
+app.post('/api/admin/departments', requireAdmin, (req, res) => {
     const { code, name, college_code, is_active = 1 } = req.body;
     adminRepo.createDepartment({ code, name, college_code, is_active })
         .then(result => res.json({ message: 'Department added', id: result.lastID }))
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
-app.put('/api/admin/departments/:id', (req, res) => {
+app.put('/api/admin/departments/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { code, name, college_code, is_active = 1 } = req.body;
     adminRepo.updateDepartment(id, { code, name, college_code, is_active })
@@ -429,7 +537,7 @@ app.put('/api/admin/departments/:id', (req, res) => {
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
-app.delete('/api/admin/departments/:id', (req, res) => {
+app.delete('/api/admin/departments/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     adminRepo.deleteDepartment(id)
         .then(() => res.json({ message: 'Department deleted' }))
@@ -442,14 +550,14 @@ app.get('/api/admin/lecturers', (req, res) => {
         .catch(err => res.status(500).json({ error: err.message }));
 });
 
-app.post('/api/admin/lecturers', (req, res) => {
+app.post('/api/admin/lecturers', requireAdmin, (req, res) => {
     const { name, department_code, email = null } = req.body;
     adminRepo.createLecturer({ name, department_code, email })
         .then(result => res.json({ message: 'Lecturer added', id: result.lastID }))
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
-app.put('/api/admin/lecturers/:id', (req, res) => {
+app.put('/api/admin/lecturers/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { name, department_code, email = null } = req.body;
     adminRepo.updateLecturer(id, { name, department_code, email })
@@ -457,7 +565,7 @@ app.put('/api/admin/lecturers/:id', (req, res) => {
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
-app.delete('/api/admin/lecturers/:id', (req, res) => {
+app.delete('/api/admin/lecturers/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     adminRepo.deleteLecturer(id)
         .then(() => res.json({ message: 'Lecturer deleted' }))
@@ -470,7 +578,7 @@ app.get('/api/admin/venues', (req, res) => {
         .catch(err => res.status(500).json({ error: err.message }));
 });
 
-app.post('/api/admin/venues', (req, res) => {
+app.post('/api/admin/venues', requireAdmin, (req, res) => {
     const { name, college_code = null } = req.body;
     const capacity = parseVenueSeats(req.body);
     adminRepo.createVenue({ name, college_code, capacity })
@@ -478,7 +586,7 @@ app.post('/api/admin/venues', (req, res) => {
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
-app.put('/api/admin/venues/:id', (req, res) => {
+app.put('/api/admin/venues/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { name, college_code = null } = req.body;
     const capacity = parseVenueSeats(req.body);
@@ -487,7 +595,7 @@ app.put('/api/admin/venues/:id', (req, res) => {
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
-app.delete('/api/admin/venues/:id', (req, res) => {
+app.delete('/api/admin/venues/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     adminRepo.deleteVenue(id)
         .then(() => res.json({ message: 'Venue deleted' }))
@@ -500,7 +608,7 @@ app.get('/api/admin/rules', (req, res) => {
         .catch(err => res.status(500).json({ error: err.message }));
 });
 
-app.put('/api/admin/rules/:id', (req, res) => {
+app.put('/api/admin/rules/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { name, rule_key, rule_value, is_active = 1 } = req.body;
     adminRepo.updateRule(id, { name, rule_key, rule_value, is_active })
@@ -519,10 +627,100 @@ app.get('/api/options', (req, res) => {
         .catch(err => res.status(500).json({ error: err.message }));
 });
 
-// --- API Endpoints ---
+// Internal helper: auto-sync courses from MTU Portal if configured.
+// Called automatically by handleGenerate — no manual trigger needed.
+const autoSyncCoursesFromPortal = async ({ timetable_id, timetableRow, department }) => {
+    const MTU_PORTAL_API_URL = process.env.MTU_PORTAL_API_URL || '';
+    const MTU_PORTAL_API_KEY = process.env.MTU_PORTAL_API_KEY || '';
+
+    if (!MTU_PORTAL_API_URL) {
+        return { synced: false, reason: 'MTU_PORTAL_API_URL not configured' };
+    }
+
+    const college = timetableRow.college || null;
+    const headers = { 'Content-Type': 'application/json' };
+    if (MTU_PORTAL_API_KEY) {
+        headers['x-api-key'] = MTU_PORTAL_API_KEY;
+    }
+
+    const params = new URLSearchParams();
+    if (college) params.append('college', college);
+    if (department) params.append('department', department);
+    if (timetableRow.semester) params.append('semester', timetableRow.semester);
+    if (timetableRow.academic_session) params.append('session', timetableRow.academic_session);
+
+    const catalogUrl = `${MTU_PORTAL_API_URL.replace(/\/$/, '')}/courses?${params.toString()}`;
+
+    let portalResponse;
+    try {
+        portalResponse = await fetch(catalogUrl, { headers });
+    } catch (fetchErr) {
+        console.warn('[Portal Sync] Could not reach MTU Portal API:', fetchErr.message);
+        return { synced: false, reason: fetchErr.message };
+    }
+
+    if (!portalResponse.ok) {
+        const errText = await portalResponse.text();
+        console.warn(`[Portal Sync] MTU Portal API returned ${portalResponse.status}:`, errText);
+        return { synced: false, reason: `Portal API ${portalResponse.status}` };
+    }
+
+    const portalData = await portalResponse.json();
+    let rawCourses = Array.isArray(portalData)
+        ? portalData
+        : (Array.isArray(portalData.courses) ? portalData.courses : []);
+
+    // Post-filter by department in case portal ignores the query param
+    if (department) {
+        const normalizedFilter = String(department).trim().toLowerCase();
+        rawCourses = rawCourses.filter(raw => {
+            const dept = String(raw.department || raw.dept || raw.department_code || '').trim().toLowerCase();
+            return dept === normalizedFilter;
+        });
+    }
+
+    let imported = 0;
+    let skipped = 0;
+
+    for (const raw of rawCourses) {
+        try {
+            const code = raw.code || raw.course_code || raw.courseCode || '';
+            const title = raw.title || raw.name || raw.course_title || raw.courseTitle || '';
+            const dept = raw.department || raw.dept || raw.department_code || '';
+            const level = Number(raw.level || raw.year || 0);
+            const units = Number(raw.units || raw.credit_units || raw.creditUnits || 1);
+            const semester = raw.semester || timetableRow.semester || 'First';
+            const type = raw.type || 'Lecture';
+            const is_compulsory = raw.is_compulsory || raw.compulsory || false;
+            const lecturers = Array.isArray(raw.lecturers)
+                ? raw.lecturers
+                : (raw.lecturer ? [raw.lecturer] : []);
+            const duration = Number(raw.duration_hours || raw.duration || 1) * 60;
+            const student_count = Number(raw.student_count || raw.students || 0);
+
+            if (!code || !title || !dept || !level) {
+                skipped++;
+                continue;
+            }
+
+            await coursesRepo.create({
+                code, title, college, department: dept, level, lecturers,
+                units, semester, type, is_compulsory,
+                preferred_day: 'AUTO', preferred_time: 'AUTO',
+                venue: '', duration, student_count, custom_data: {}, timetable_id
+            });
+            imported++;
+        } catch {
+            skipped++;
+        }
+    }
+
+    console.log(`[Portal Sync] Imported: ${imported}, Skipped: ${skipped}`);
+    return { synced: true, imported, skipped };
+};
 
 // Add a new course
-app.post('/api/courses', (req, res) => {
+app.post('/api/courses', requireAdmin, (req, res) => {
     const { code, title, department, level, lecturers, units, semester, type, is_compulsory, preferred_day, preferred_time, venue, duration, student_count, custom_data } = req.body;
     // API accepts duration in hours; store duration in minutes.
     const durationInMinutes = parseFloat(duration) * 60;
@@ -574,13 +772,15 @@ app.get('/api/courses', (req, res) => {
     const { timetable_id } = req.query;
     coursesRepo.list({ timetableId: timetable_id })
         .then((rows) => {
-            const courses = rows.map(row => ({
-                ...row,
-                is_compulsory: row.is_compulsory === true || row.is_compulsory === 1 || row.is_compulsory === '1' || row.is_compulsory === 'true',
-                custom_data: typeof row.custom_data === 'string'
+            const courses = rows.map(row => {
+                const custom_data = typeof row.custom_data === 'string'
                     ? (row.custom_data ? JSON.parse(row.custom_data) : {})
-                    : (row.custom_data || {})
-            }));
+                    : (row.custom_data || {});
+                const is_compulsory =
+                    row.is_compulsory === true || row.is_compulsory === 1 || row.is_compulsory === '1' || row.is_compulsory === 'true'
+                    || custom_data.is_compulsory === true || custom_data.is_compulsory === 1;
+                return { ...row, is_compulsory, custom_data };
+            });
             res.json({ data: courses });
         })
         .catch((err) => {
@@ -613,7 +813,7 @@ app.get('/api/timetables/:id', (req, res) => {
 });
 
 // Create new timetable (Empty)
-app.post('/api/timetables', (req, res) => {
+app.post('/api/timetables', requireAdmin, (req, res) => {
     const { type, name, academic_session, semester, college } = req.body;
 
     adminRepo.getActiveCollegeByCode(college)
@@ -635,7 +835,7 @@ app.post('/api/timetables', (req, res) => {
 });
 
 // Update timetable metadata
-app.put('/api/timetables/:id', (req, res) => {
+app.put('/api/timetables/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { name, academic_session, semester, status } = req.body;
     timetablesRepo.updateMeta(id, { name, academic_session, semester, status })
@@ -644,7 +844,7 @@ app.put('/api/timetables/:id', (req, res) => {
 });
 
 // Delete timetable
-app.delete('/api/timetables/:id', (req, res) => {
+app.delete('/api/timetables/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     timetablesRepo.deleteById(id)
         .then(() => res.json({ message: 'Timetable deleted' }))
@@ -652,7 +852,7 @@ app.delete('/api/timetables/:id', (req, res) => {
 });
 
 // Duplicate timetable
-app.post('/api/timetables/:id/duplicate', (req, res) => {
+app.post('/api/timetables/:id/duplicate', requireAdmin, (req, res) => {
     const { id } = req.params;
     timetablesRepo.duplicateById(id)
         .then((result) => {
@@ -677,6 +877,17 @@ const handleGenerate = async (req, res, generateFn, type) => {
         const timetableRow = await timetablesRepo.getRawById(timetable_id);
         if (!timetableRow) {
             return res.status(400).json({ error: 'Invalid timetable_id' });
+        }
+
+        // Auto-sync courses from MTU Portal if configured — no manual step needed.
+        const syncDepartment = scope === 'department' ? department : null;
+        const syncResult = await autoSyncCoursesFromPortal({
+            timetable_id,
+            timetableRow,
+            department: syncDepartment
+        });
+        if (syncResult.synced) {
+            console.log(`[Generate] Portal auto-sync: ${syncResult.imported} imported, ${syncResult.skipped} skipped.`);
         }
 
         const courses = await coursesRepo.listByTimetableId(timetable_id);
@@ -827,12 +1038,12 @@ const handleGenerate = async (req, res, generateFn, type) => {
     }
 };
 
-app.post('/api/generate/lectures', (req, res) => handleGenerate(req, res, generateLectureSchedule, 'Lecture'));
-app.post('/api/generate/exams', (req, res) => handleGenerate(req, res, generateExamSchedule, 'Exam'));
-app.post('/api/generate/tests', (req, res) => handleGenerate(req, res, generateTestSchedule, 'Test'));
+app.post('/api/generate/lectures', requireAdmin, (req, res) => handleGenerate(req, res, generateLectureSchedule, 'Lecture'));
+app.post('/api/generate/exams', requireAdmin, (req, res) => handleGenerate(req, res, generateExamSchedule, 'Exam'));
+app.post('/api/generate/tests', requireAdmin, (req, res) => handleGenerate(req, res, generateTestSchedule, 'Test'));
 
 // Validate Timetable Move
-app.post('/api/timetables/validate', (req, res) => {
+app.post('/api/timetables/validate', requireAdmin, (req, res) => {
     const { schedule, course, day, time } = req.body;
     const { hasConflict } = require('./ai/scheduler');
 
@@ -845,7 +1056,7 @@ app.post('/api/timetables/validate', (req, res) => {
 });
 
 // Save Timetable
-app.post('/api/timetables/:type/save', (req, res) => {
+app.post('/api/timetables/:type/save', requireAdmin, (req, res) => {
     const { type } = req.params;
     const { scheduled, unscheduled } = req.body;
 
@@ -857,7 +1068,7 @@ app.post('/api/timetables/:type/save', (req, res) => {
 });
 
 // Save Timetable (Specific ID)
-app.post('/api/timetables/:id/save', (req, res) => {
+app.post('/api/timetables/:id/save', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { scheduled, unscheduled } = req.body;
 
@@ -869,7 +1080,7 @@ app.post('/api/timetables/:id/save', (req, res) => {
 });
 
 // Clear Unscheduled Courses (Specific ID)
-app.post('/api/timetables/:id/clear-unscheduled', (req, res) => {
+app.post('/api/timetables/:id/clear-unscheduled', requireAdmin, (req, res) => {
     const { id } = req.params;
 
     timetablesRepo.getRawById(id)

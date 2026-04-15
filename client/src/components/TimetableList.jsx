@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API_BASE_URL from '../apiBase';
+import { adminHeaders } from '../adminAuth';
 import FloatingNotice from './FloatingNotice';
 import getNoticeTimeoutMs from '../noticeTimeout';
 
@@ -111,7 +112,7 @@ const TimetableList = () => {
         try {
             const response = await fetch(`${API_BASE_URL}/timetables`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
                 body: JSON.stringify(newTimetable)
             });
             if (response.ok) {
@@ -136,7 +137,7 @@ const TimetableList = () => {
         if (!window.confirm('Are you sure you want to delete this timetable?')) return;
         try {
             suppressNextNotificationRef.current = true;
-            await fetch(`${API_BASE_URL}/timetables/${id}`, { method: 'DELETE' });
+            await fetch(`${API_BASE_URL}/timetables/${id}`, { method: 'DELETE', headers: adminHeaders() });
             fetchTimetables();
         } catch (err) {
             console.error(err);
@@ -147,7 +148,7 @@ const TimetableList = () => {
         e.stopPropagation();
         try {
             suppressNextNotificationRef.current = true;
-            await fetch(`${API_BASE_URL}/timetables/${id}/duplicate`, { method: 'POST' });
+            await fetch(`${API_BASE_URL}/timetables/${id}/duplicate`, { method: 'POST', headers: adminHeaders() });
             fetchTimetables();
         } catch (err) {
             console.error(err);

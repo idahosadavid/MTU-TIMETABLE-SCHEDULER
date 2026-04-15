@@ -11,7 +11,7 @@ const Dashboard = ({ timetableId }) => {
         title: '',
         department: '',
         level: '',
-        lecturers: '',
+        lecturers: [],
         units: '',
         semester: 'First',
         type: 'Lecture',
@@ -25,13 +25,15 @@ const Dashboard = ({ timetableId }) => {
         custom_data: {}
     });
 
+    // College selection for the Add Course form (independent of generation scope)
+    const [courseCollege, setCourseCollege] = useState('');
+
     const [customFields, setCustomFields] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [options, setOptions] = useState({ colleges: [], departments: [], lecturers: [] });
+    const [options, setOptions] = useState({ colleges: [], departments: [], lecturers: [], venues: [] });
     const [notice, setNotice] = useState({ message: '', type: 'info' });
     const [generationScope, setGenerationScope] = useState({
         scope: 'college',
-        college: '',
         department: '',
         level: '',
         semester: 'First'
@@ -73,10 +75,11 @@ const Dashboard = ({ timetableId }) => {
 
                 setGenerationScope(prev => ({
                     ...prev,
-                    college: resolvedCollege,
                     department: '',
                     semester: prev.semester || 'First'
                 }));
+                // Pre-select college for the Add Course form
+                setCourseCollege(resolvedCollege);
             } catch (error) {
                 console.error('Failed to fetch options', error);
             }
@@ -84,7 +87,10 @@ const Dashboard = ({ timetableId }) => {
         fetchOptions();
     }, [timetableId]);
 
-    const filteredDepartments = options.departments.filter(d => !generationScope.college || d.college_code === generationScope.college);
+    // Departments filtered for the Add Course form by the course-form college
+    const filteredDepartments = options.departments.filter(d => !courseCollege || d.college_code === courseCollege);
+    // Departments available in the Generation Scope panel (all departments — admin picks one when scope = department)
+    const scopeDepartments = options.departments;
 
     const handleCustomFieldChange = (e, fieldName) => {
         setCourse({
@@ -118,8 +124,8 @@ const Dashboard = ({ timetableId }) => {
                 },
                 body: JSON.stringify({
                     ...course,
-                    college: generationScope.college || '',
-                    lecturers: course.lecturers.split(',').map(l => l.trim()), // Convert string to array
+                    college: courseCollege || '',
+                    lecturers: course.lecturers, // already an array
                     units: parseInt(course.units),
                     level: parseInt(course.level),
                     duration: parseFloat(course.duration), // Send hours, backend converts to minutes
@@ -146,7 +152,7 @@ const Dashboard = ({ timetableId }) => {
                     title: '',
                     department: filteredDepartments[0]?.code || '',
                     level: '',
-                    lecturers: '',
+                    lecturers: [],
                     units: '',
                     semester: 'First',
                     type: 'Lecture',
@@ -227,19 +233,22 @@ const Dashboard = ({ timetableId }) => {
             </div>
 
             <div className="mb-6 p-4 border rounded bg-blue-50">
-                <h3 className="font-semibold mb-3">Generation Scope</h3>
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                    <select value={generationScope.scope} onChange={(e) => setGenerationScope({ ...generationScope, scope: e.target.value })} className="border p-2 rounded">
+                <h3 className="font-semibold mb-1">Generation Scope</h3>
+                <p className="text-xs text-gray-500 mb-3">Controls which courses are included when you click Generate. The timetable's college is applied automatically.</p>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <select value={generationScope.scope} onChange={(e) => setGenerationScope({ ...generationScope, scope: e.target.value, department: '' })} className="border p-2 rounded">
                         <option value="college">Entire College</option>
                         <option value="department">Specific Department</option>
                     </select>
-                    <select value={generationScope.college} onChange={(e) => setGenerationScope({ ...generationScope, college: e.target.value, department: '' })} className="border p-2 rounded">
-                        <option value="">Select College</option>
-                        {options.colleges.map(college => <option key={college.code} value={college.code}>{college.code}</option>)}
-                    </select>
-                    <select value={generationScope.department} onChange={(e) => setGenerationScope({ ...generationScope, department: e.target.value })} className="border p-2 rounded" disabled={generationScope.scope !== 'department'}>
+                    <select
+                        value={generationScope.department}
+                        onChange={(e) => setGenerationScope({ ...generationScope, department: e.target.value })}
+                        className="border p-2 rounded"
+                        disabled={generationScope.scope !== 'department'}
+                        title={generationScope.scope !== 'department' ? 'Select \'Specific Department\' scope to enable' : ''}
+                    >
                         <option value="">Select Department</option>
-                        {filteredDepartments.map(dept => <option key={dept.code} value={dept.code}>{dept.code} - {dept.name}</option>)}
+                        {scopeDepartments.map(dept => <option key={dept.code} value={dept.code}>{dept.code} — {dept.name}</option>)}
                     </select>
                     <select value={generationScope.level} onChange={(e) => setGenerationScope({ ...generationScope, level: e.target.value })} className="border p-2 rounded">
                         <option value="">All Levels</option>
@@ -261,10 +270,25 @@ const Dashboard = ({ timetableId }) => {
             <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <input name="code" value={course.code} placeholder="Course Code" onChange={handleChange} className="border p-2 rounded" required />
                 <input name="title" value={course.title} placeholder="Course Title" onChange={handleChange} className="border p-2 rounded" required />
+
+                {/* College selector for the Add Course form — controls which departments appear */}
+                <select
+                    value={courseCollege}
+                    onChange={(e) => {
+                        setCourseCollege(e.target.value);
+                        setCourse(prev => ({ ...prev, department: '' }));
+                    }}
+                    className="border p-2 rounded"
+                >
+                    <option value="">Select College</option>
+                    {options.colleges.map(c => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
+                </select>
+
                 <select name="department" value={course.department} onChange={handleChange} className="border p-2 rounded" required>
                     <option value="">Select Department</option>
                     {filteredDepartments.map(dept => <option key={dept.code} value={dept.code}>{dept.code} - {dept.name}</option>)}
                 </select>
+
                 <select name="level" value={course.level} onChange={handleChange} className="border p-2 rounded" required>
                     <option value="">Select Level</option>
                     <option value="100">100</option>
@@ -273,10 +297,46 @@ const Dashboard = ({ timetableId }) => {
                     <option value="400">400</option>
                     <option value="500">500</option>
                 </select>
-                <input name="lecturers" value={course.lecturers} placeholder="Lecturers (comma separated)" onChange={handleChange} className="border p-2 rounded" list="lecturer-options" />
-                <datalist id="lecturer-options">
-                    {options.lecturers.map(lecturer => <option key={lecturer.name} value={lecturer.name} />)}
-                </datalist>
+
+                {/* Lecturer checkboxes — tick to select from pre-loaded lecturers */}
+                <div className="flex flex-col">
+                    <label className="text-sm text-gray-600 mb-1">Lecturers</label>
+                    {options.lecturers.length > 0 ? (
+                        <div className="border rounded p-2 max-h-36 overflow-y-auto space-y-1 bg-white">
+                            {options.lecturers.map(l => {
+                                const isChecked = course.lecturers.includes(l.name);
+                                return (
+                                    <label key={l.name} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 px-1 rounded">
+                                        <input
+                                            type="checkbox"
+                                            checked={isChecked}
+                                            onChange={() => {
+                                                setCourse(prev => ({
+                                                    ...prev,
+                                                    lecturers: isChecked
+                                                        ? prev.lecturers.filter(n => n !== l.name)
+                                                        : [...prev.lecturers, l.name]
+                                                }));
+                                            }}
+                                        />
+                                        {l.name}{l.department_code ? ` (${l.department_code})` : ''}
+                                    </label>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <input
+                            name="lecturers"
+                            value={course.lecturers.join(', ')}
+                            placeholder="Lecturers (comma separated)"
+                            onChange={(e) => setCourse(prev => ({ ...prev, lecturers: e.target.value.split(',').map(l => l.trim()).filter(Boolean) }))}
+                            className="border p-2 rounded"
+                        />
+                    )}
+                    {course.lecturers.length > 0 && (
+                        <p className="text-xs text-gray-500 mt-1">Selected: {course.lecturers.join(', ')}</p>
+                    )}
+                </div>
                 <input name="units" value={course.units} type="number" placeholder="Units" onChange={handleChange} className="border p-2 rounded" required />
                 <select name="semester" value={course.semester} onChange={handleChange} className="border p-2 rounded">
                     <option value="First">First Semester</option>
@@ -298,7 +358,18 @@ const Dashboard = ({ timetableId }) => {
                 </select>
                 <input name="preferred_day" value={course.preferred_day} placeholder="Preferred Day (or AUTO)" onChange={handleChange} className="border p-2 rounded" />
                 <input name="preferred_time" value={course.preferred_time} placeholder="Preferred Time (or AUTO)" onChange={handleChange} className="border p-2 rounded" />
-                <input name="venue" value={course.venue} placeholder="Venue" onChange={handleChange} className="border p-2 rounded" />
+                {options.venues.length > 0 ? (
+                    <select name="venue" value={course.venue} onChange={handleChange} className="border p-2 rounded">
+                        <option value="">Select Venue (optional)</option>
+                        {options.venues.map(v => (
+                            <option key={v.name} value={v.name}>
+                                {v.name}{v.capacity ? ` (${v.capacity} seats)` : ''}
+                            </option>
+                        ))}
+                    </select>
+                ) : (
+                    <input name="venue" value={course.venue} placeholder="Venue" onChange={handleChange} className="border p-2 rounded" />
+                )}
                 <input name="duration" value={course.duration} type="number" step="0.5" placeholder="Duration (hours)" onChange={handleChange} className="border p-2 rounded" />
                 <input name="student_count" value={course.student_count} type="number" placeholder="Student Count" onChange={handleChange} className="border p-2 rounded" />
                 <input

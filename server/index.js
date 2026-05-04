@@ -10,7 +10,7 @@ const { createStudentSessionToken, verifyStudentSessionToken, DEFAULT_TTL_SECOND
 const { issuePortalAuthCode, consumePortalAuthCode } = require('./security/portalAuthCodeStore');
 const { provisionStudentFromPortal } = require('./services/portalStudentProvisioner');
 
-const { adminRepo, customFieldsRepo, coursesRepo, timetablesRepo, studentsRepo } = repositories;
+const { adminRepo, customFieldsRepo, coursesRepo, timetablesRepo, studentsRepo, timetableCoursesRepo } = repositories;
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -724,7 +724,7 @@ const autoSyncCoursesFromPortal = async ({ timetable_id, timetableRow, departmen
 
 // Add a new course
 app.post('/api/courses', requireAdmin, (req, res) => {
-    const { code, title, department, level, lecturers, units, semester, type, is_compulsory, preferred_day, preferred_time, venue, duration, student_count, custom_data } = req.body;
+    const { code, title, department, level, lecturers, units, semester, type, is_compulsory, preferred_day, preferred_time, venue, duration, custom_data } = req.body;
     // API accepts duration in hours; store duration in minutes.
     const durationInMinutes = parseFloat(duration) * 60;
     const timetable_id = req.body.timetable_id;
@@ -754,7 +754,6 @@ app.post('/api/courses', requireAdmin, (req, res) => {
                 preferred_time,
                 venue,
                 duration: durationInMinutes,
-                student_count,
                 custom_data,
                 timetable_id
             });
@@ -789,6 +788,172 @@ app.get('/api/courses', (req, res) => {
         .catch((err) => {
             res.status(400).json({ error: err.message });
         });
+});
+
+// Get master courses (not assigned to any timetable) - MUST be before /api/courses/:id
+app.get('/api/courses/master', (req, res) => {
+    timetableCoursesRepo.getMasterCourses()
+        .then(courses => res.json({ data: courses }))
+        .catch(err => {
+            console.error('getMasterCourses error:', err);
+            res.status(400).json({ error: err.message || 'Unknown error', stack: err.stack });
+        });
+});
+
+// Get single course
+app.get('/api/courses/:id', (req, res) => {
+    const { id } = req.params;
+    coursesRepo.getById(id)
+        .then((course) => {
+            if (!course) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            res.json({ data: course });
+        })
+        .catch((err) => {
+            res.status(400).json({ error: err.message });
+        });
+});
+
+// Update a course
+app.put('/api/courses/:id', requireAdmin, (req, res) => {
+    const { id } = req.params;
+    const { code, title, department, level, lecturers, units, semester, type, is_compulsory, preferred_day, preferred_time, venue, duration, custom_data, timetable_id } = req.body;
+    const durationInMinutes = parseFloat(duration) * 60;
+
+    coursesRepo.getById(id)
+        .then((existing) => {
+            if (!existing) {
+                throw new Error('Course not found');
+            }
+            return coursesRepo.update(id, {
+                code,
+                title,
+                college: existing.college,
+                department,
+                level,
+                lecturers,
+                units,
+                semester,
+                type,
+                is_compulsory,
+                preferred_day,
+                preferred_time,
+                venue,
+                duration: durationInMinutes,
+                custom_data,
+                timetable_id: timetable_id || existing.timetable_id
+            });
+        })
+        .then(() => {
+            res.json({ message: 'Course updated successfully' });
+        })
+        .catch((err) => {
+            if (err.message === 'Course not found') {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            res.status(400).json({ error: err.message });
+        });
+});
+
+// Delete a course
+app.delete('/api/courses/:id', requireAdmin, (req, res) => {
+    const { id } = req.params;
+    coursesRepo.remove(id)
+        .then(() => {
+            res.json({ message: 'Course deleted successfully' });
+        })
+        .catch((err) => {
+            res.status(400).json({ error: err.message });
+        });
+});
+
+// --- Timetable-Courses Relationship APIs ---
+
+// Diagnostic: Direct Supabase test
+app.get('/api/debug/supabase', async (req, res) => {
+    try {
+        const { getSupabaseClient } = require('./database/supabaseAdapter');
+        const supabase = getSupabaseClient();
+
+        // Test 1: Simple count query
+        const { data: countData, error: countError } = await supabase
+            .from('courses')
+            .select('*', { count: 'exact', head: true });
+
+        // Test 2: Try to get all courses (no filter)
+        const { data: allData, error: allError } = await supabase
+            .from('courses')
+            .select('id, code, title, timetable_id')
+            .limit(5);
+
+        // Test 3: Try null filter
+        const { data: nullData, error: nullError } = await supabase
+            .from('courses')
+            .select('id, code, title')
+            .is('timetable_id', null);
+
+        res.json({
+            test1_count: { data: countData, error: countError },
+            test2_all: { data: allData, error: allError },
+            test3_null_filter: { data: nullData, error: nullError }
+        });
+    } catch (err) {
+        console.error('Debug endpoint error:', err);
+        res.status(500).json({ error: err.message, stack: err.stack });
+    }
+});
+
+// Get courses for a specific timetable
+app.get('/api/timetables/:id/courses', (req, res) => {
+    const { id } = req.params;
+    timetableCoursesRepo.getCoursesByTimetableId(id)
+        .then(courses => res.json({ data: courses }))
+        .catch(err => res.status(400).json({ error: err.message }));
+});
+
+// Assign a course to a timetable
+app.post('/api/timetables/:id/courses', requireAdmin, (req, res) => {
+    const { id } = req.params;
+    const { course_id } = req.body;
+    if (!course_id) {
+        return res.status(400).json({ error: 'course_id is required' });
+    }
+    timetableCoursesRepo.assignCourse(id, course_id)
+        .then(() => res.json({ message: 'Course assigned to timetable' }))
+        .catch(err => res.status(400).json({ error: err.message }));
+});
+
+// Assign multiple courses to a timetable
+app.post('/api/timetables/:id/courses/bulk', requireAdmin, (req, res) => {
+    const { id } = req.params;
+    const { course_ids } = req.body;
+    if (!Array.isArray(course_ids) || course_ids.length === 0) {
+        return res.status(400).json({ error: 'course_ids array is required' });
+    }
+    timetableCoursesRepo.assignCourses(id, course_ids)
+        .then(() => res.json({ message: `${course_ids.length} courses assigned to timetable` }))
+        .catch(err => res.status(400).json({ error: err.message }));
+});
+
+// Remove a course from a timetable
+app.delete('/api/timetables/:timetableId/courses/:courseId', requireAdmin, (req, res) => {
+    const { timetableId, courseId } = req.params;
+    timetableCoursesRepo.removeCourse(timetableId, courseId)
+        .then(() => res.json({ message: 'Course removed from timetable' }))
+        .catch(err => res.status(400).json({ error: err.message }));
+});
+
+// Copy courses from one timetable to another
+app.post('/api/timetables/:id/courses/copy', requireAdmin, (req, res) => {
+    const { id } = req.params;
+    const { source_timetable_id } = req.body;
+    if (!source_timetable_id) {
+        return res.status(400).json({ error: 'source_timetable_id is required' });
+    }
+    timetableCoursesRepo.copyCoursesFromTimetable(id, source_timetable_id)
+        .then(() => res.json({ message: 'Courses copied from source timetable' }))
+        .catch(err => res.status(400).json({ error: err.message }));
 });
 
 // --- Timetable CRUD APIs ---

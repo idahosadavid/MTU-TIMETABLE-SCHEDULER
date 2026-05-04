@@ -1,6 +1,93 @@
 @import "tailwindcss";
 
+/* MTU Brand Colors */
+:root {
+  --mtu-primary: #4c1d95;
+  --mtu-primary-light: #6d28d9;
+  --mtu-primary-dark: #3b0764;
+  --mtu-secondary: #059669;
+  --mtu-secondary-light: #10b981;
+  --mtu-secondary-dark: #047857;
+  --mtu-accent-amber: #f59e0b;
+  --mtu-accent-red: #dc2626;
+  --mtu-surface: #ffffff;
+  --mtu-background: #f8fafc;
+  --mtu-text: #0f172a;
+  --mtu-text-muted: #64748b;
+  --mtu-border: #e2e8f0;
+}
+
+/* Global resets */
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
 body {
-  background-color: #f3f4f6;
-  font-family: 'Inter', sans-serif;
+  background-color: var(--mtu-background);
+  color: var(--mtu-text);
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+/* Focus styles for accessibility */
+*:focus-visible {
+  outline: 2px solid var(--mtu-primary);
+  outline-offset: 2px;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Brand utilities - used alongside Tailwind */
+@layer utilities {
+  .bg-mtu-primary {
+    background-color: var(--mtu-primary);
+  }
+  .bg-mtu-secondary {
+    background-color: var(--mtu-secondary);
+  }
+  .text-mtu-primary {
+    color: var(--mtu-primary);
+  }
+  .text-mtu-secondary {
+    color: var(--mtu-secondary);
+  }
+  .border-mtu-primary {
+    border-color: var(--mtu-primary);
+  }
+  .hover\:bg-mtu-primary-dark:hover {
+    background-color: var(--mtu-primary-dark);
+  }
+  .hover\:bg-mtu-secondary-dark:hover {
+    background-color: var(--mtu-secondary-dark);
+  }
 }

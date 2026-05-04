@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import API_BASE_URL from '../apiBase';
+import mtuLogo from "../../../mtulogo.jpg";
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 const TIMES = ['9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM', '6:00 PM'];
@@ -16,6 +17,25 @@ const to12Hour = (t) => {
     if (h < 12) return `${h}:${m} AM`;
     if (h === 12) return `12:${m} PM`;
     return `${h - 12}:${m} PM`;
+};
+
+// Course type color schemes
+const courseTypeStyles = {
+    Lecture: {
+        bg: 'bg-emerald-50',
+        border: 'border-emerald-400',
+        text: 'text-emerald-900'
+    },
+    Exam: {
+        bg: 'bg-purple-50',
+        border: 'border-purple-400',
+        text: 'text-purple-900'
+    },
+    Test: {
+        bg: 'bg-amber-50',
+        border: 'border-amber-400',
+        text: 'text-amber-900'
+    }
 };
 
 const StudentPortal = () => {
@@ -171,47 +191,79 @@ const StudentPortal = () => {
         // Still waiting for the useEffect portal-redirect check to complete
         if (!portalRedirectAttempted && !error) {
             return (
-                <div className="flex items-center justify-center min-h-[50vh]">
-                    <div className="text-center text-gray-500">Checking portal session...</div>
+                <div className="flex items-center justify-center min-h-[60vh]">
+                    <div className="text-center">
+                        <div className="w-12 h-12 border-4 border-purple-200 border-t-[#4c1d95] rounded-full animate-spin mx-auto mb-4"></div>
+                        <p className="text-slate-500">Connecting to MTU Portal...</p>
+                    </div>
                 </div>
             );
         }
 
         return (
-            <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
-                <div className="bg-white p-10 rounded-2xl shadow-lg w-full max-w-md text-center">
-                    {/* MTU crest / icon */}
+            <div className="flex flex-col items-center justify-center min-h-[70vh] px-4">
+                <div className="bg-white p-8 md:p-12 rounded-2xl shadow-xl w-full max-w-md text-center border border-slate-100">
+                    {/* MTU Logo */}
                     <div className="flex justify-center mb-6">
-                        <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center">
-                            <svg className="w-8 h-8 text-blue-700" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l9-5-9-5-9 5 9 5z" />
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l6.16-3.422A12.083 12.083 0 0121 21H3a12.083 12.083 0 012.84-10.422L12 14z" />
-                            </svg>
+                        <div className="w-20 h-20 rounded-full bg-white shadow-lg p-2 border-2 border-slate-100">
+                            <img src={mtuLogo} alt="MTU Logo" className="w-full h-full object-contain rounded-full" />
                         </div>
                     </div>
 
-                    <h2 className="text-2xl font-bold text-blue-900 mb-2">MTU Student Timetable</h2>
-                    <p className="text-gray-500 text-sm mb-6">
-                        Your personalised timetable is accessed securely through the MTU Student Portal.
+                    <h1 className="text-2xl font-bold text-slate-900 mb-2">MTU Timetable</h1>
+                    <p className="text-slate-500 text-sm mb-6">
+                        Access your personalized class schedule securely through the MTU Student Portal.
                     </p>
 
                     {error && (
-                        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-5">
-                            {error}
+                        <div className="bg-red-50 border-l-4 border-red-500 text-red-700 text-sm rounded-r-lg px-4 py-3 mb-5 text-left">
+                            <div className="flex items-start gap-2">
+                                <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <span>{error}</span>
+                            </div>
                         </div>
                     )}
 
                     {loading ? (
-                        <div className="text-blue-700 font-medium animate-pulse">Loading your timetable...</div>
+                        <div className="flex items-center justify-center gap-2 text-[#4c1d95] font-medium">
+                            <div className="w-4 h-4 border-2 border-purple-200 border-t-[#4c1d95] rounded-full animate-spin"></div>
+                            Loading your timetable...
+                        </div>
                     ) : (
-                        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
-                            <p className="font-semibold mb-1">How to access your timetable</p>
-                            <p>Log in to the <strong>MTU Student Portal</strong> and click <strong>"View My Timetable"</strong>. You will be redirected here automatically.</p>
+                        <div className="bg-purple-50 border border-purple-100 rounded-xl p-5 text-sm">
+                            <div className="flex items-center gap-3 mb-3">
+                                <div className="w-10 h-10 bg-[#4c1d95] rounded-lg flex items-center justify-center">
+                                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                </div>
+                                <div className="text-left">
+                                    <p className="font-semibold text-slate-800">How to Access</p>
+                                    <p className="text-slate-500">Two simple steps</p>
+                                </div>
+                            </div>
+                            <ol className="text-left text-slate-600 space-y-2 ml-2">
+                                <li className="flex items-start gap-2">
+                                    <span className="w-5 h-5 bg-[#4c1d95] text-white rounded-full flex items-center justify-center text-xs flex-shrink-0 mt-0.5">1</span>
+                                    <span>Log in to the <strong>MTU Student Portal</strong></span>
+                                </li>
+                                <li className="flex items-start gap-2">
+                                    <span className="w-5 h-5 bg-[#4c1d95] text-white rounded-full flex items-center justify-center text-xs flex-shrink-0 mt-0.5">2</span>
+                                    <span>Click <strong>"View My Timetable"</strong> to access your schedule</span>
+                                </li>
+                            </ol>
                         </div>
                     )}
 
-                    <div className="mt-6">
-                        <Link to="/" className="text-sm text-gray-400 hover:text-gray-600 underline">Back to Main Menu</Link>
+                    <div className="mt-6 pt-6 border-t border-slate-100">
+                        <Link to="/" className="text-sm text-slate-400 hover:text-[#4c1d95] transition-colors inline-flex items-center gap-1">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                            </svg>
+                            Back to Main Menu
+                        </Link>
                     </div>
                 </div>
             </div>
@@ -219,99 +271,212 @@ const StudentPortal = () => {
     }
 
     if (loading || !timetable) {
-        return <div className="p-6 text-center">Loading student data...</div>;
+        return (
+            <div className="flex items-center justify-center min-h-[60vh]">
+                <div className="text-center">
+                    <div className="w-12 h-12 border-4 border-purple-200 border-t-[#4c1d95] rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-slate-500">Loading your timetable...</p>
+                </div>
+            </div>
+        );
     }
 
     const { scheduled } = timetable.data;
 
     return (
-        <div className="p-6">
-            <div className="flex justify-between items-center mb-6 bg-white p-4 rounded shadow">
-                <div>
-                    <h2 className="text-2xl font-bold text-blue-900">Welcome, {student.name}</h2>
-                    <p className="text-gray-600">{student.department} - {student.level}L</p>
+        <div className="space-y-6">
+            {/* Student Header Card */}
+            <div className="bg-gradient-to-r from-[#4c1d95] to-[#6d28d9] rounded-xl shadow-lg p-6 text-white">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div className="flex items-center gap-4">
+                        <div className="w-16 h-16 rounded-full bg-white/20 backdrop-blur flex items-center justify-center border-2 border-white/30">
+                            <span className="text-2xl font-bold">{student.name?.charAt(0) || 'S'}</span>
+                        </div>
+                        <div>
+                            <h1 className="text-2xl font-bold">Welcome, {student.name}</h1>
+                            <p className="text-purple-200 text-sm flex items-center gap-2 flex-wrap">
+                                <span className="bg-white/20 px-2 py-0.5 rounded text-xs">{student.department}</span>
+                                <span>•</span>
+                                <span className="bg-emerald-500/30 px-2 py-0.5 rounded text-xs">{student.level} Level</span>
+                                <span>•</span>
+                                <span className="text-purple-200/80">{student.matric_number}</span>
+                            </p>
+                        </div>
+                    </div>
+                    <button 
+                        onClick={handleLogout} 
+                        className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors border border-white/20 text-sm font-medium"
+                    >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                        </svg>
+                        Logout
+                    </button>
                 </div>
-                <button onClick={handleLogout} className="text-red-600 hover:text-red-800 border border-red-200 px-3 py-1 rounded">
-                    Logout
-                </button>
             </div>
 
-            <div className="bg-white p-4 rounded shadow overflow-x-auto">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xl font-bold text-gray-800">My Personal Timetable</h3>
+            {/* Timetable Section */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                {/* Header with Branded Export */}
+                <div className="p-6 border-b border-slate-200 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                    <div>
+                        <h2 className="text-xl font-bold text-slate-900">My Personal Timetable</h2>
+                        <p className="text-slate-500 text-sm mt-1">
+                            {timetable.name} • {timetable.academic_session}
+                        </p>
+                    </div>
                     
-                    <div className="flex items-center gap-2">
-                        <span className="font-semibold text-sm text-gray-700">Download:</span>
-                        <select 
-                            value={exportFormat} 
-                            onChange={(e) => setExportFormat(e.target.value)} 
-                            className="border p-2 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            disabled={exportLoading}
-                        >
-                            <option value="excel">Excel</option>
-                            <option value="pdf">PDF</option>
-                            <option value="word">Word</option>
-                        </select>
-                        <button 
-                            onClick={handleExport} 
-                            className="bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700 disabled:bg-blue-300 transition-colors"
-                            disabled={exportLoading}
-                        >
-                            {exportLoading ? 'Exporting...' : 'Export'}
-                        </button>
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm text-slate-500 hidden sm:inline">Export your schedule:</span>
+                        <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-lg border border-slate-200">
+                            <select 
+                                value={exportFormat} 
+                                onChange={(e) => setExportFormat(e.target.value)} 
+                                className="px-3 py-2 bg-white border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent"
+                                disabled={exportLoading}
+                            >
+                                <option value="pdf">PDF Document</option>
+                                <option value="excel">Excel Spreadsheet</option>
+                                <option value="word">Word Document</option>
+                            </select>
+                            <button 
+                                onClick={handleExport} 
+                                disabled={exportLoading}
+                                className="flex items-center gap-2 px-4 py-2 bg-[#059669] hover:bg-[#047857] text-white rounded-md text-sm font-medium transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {exportLoading ? (
+                                    <>
+                                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                        Exporting...
+                                    </>
+                                ) : (
+                                    <>
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                        </svg>
+                                        Download
+                                    </>
+                                )}
+                            </button>
+                        </div>
                     </div>
                 </div>
-                <table className="min-w-full border-collapse border border-gray-300">
-                    <thead>
-                        <tr>
-                            <th className="border border-gray-300 p-2 bg-gray-100 w-20">Time</th>
-                            {DAYS.map(day => (
-                                <th key={day} className="border border-gray-300 p-2 bg-gray-100">{day}</th>
-                            ))}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {TIMES.map(time => (
-                            <tr key={time}>
-                                <td className="border border-gray-300 p-2 font-bold text-center bg-gray-50">{time}</td>
-                                {DAYS.map(day => {
-                                    const slotCourses = scheduled.filter(c => c.day === day && to12Hour(c.time) === time);
-                                    return (
-                                        <td key={`${day}-${time}`} className="border border-gray-300 p-1 h-24 align-top">
-                                            {slotCourses.map((course, idx) => (
-                                                <div
-                                                    key={`${course.code}-${idx}`}
-                                                    className={`p-2 rounded text-sm mb-1 border-l-4 shadow-sm ${course.clash_warning
-                                                        ? 'bg-red-100 border-red-500' // Clash Warning
-                                                        : course.is_carryover
-                                                            ? 'bg-yellow-100 border-yellow-500' // Carryover
-                                                            : 'bg-green-100 border-green-500' // Regular
-                                                        }`}
-                                                >
-                                                    <div className="font-bold flex justify-between gap-1">
-                                                        <span>{course.code}</span>
-                                                        <div className="flex items-center gap-1">
-                                                            {course.is_compulsory && <span className="text-[10px] bg-blue-200 px-1 rounded text-blue-800">COMP</span>}
-                                                            {course.is_carryover && <span className="text-[10px] bg-yellow-200 px-1 rounded text-yellow-800">CO</span>}
-                                                            {course.clash_warning && <span className="text-[10px] bg-red-200 px-1 rounded text-red-800">CLASH</span>}
-                                                        </div>
-                                                    </div>
-                                                    <div className="text-xs">{course.title}</div>
-                                                    <div className="text-xs mt-1 font-semibold text-gray-700">📍 {course.venue}</div>
-                                                </div>
-                                            ))}
-                                        </td>
-                                    );
-                                })}
+
+                {/* Timetable Grid */}
+                <div className="overflow-x-auto">
+                    <table className="w-full border-collapse">
+                        <thead>
+                            <tr>
+                                <th className="border-r border-b border-slate-200 p-3 bg-slate-50 text-xs font-semibold text-slate-600 w-20 text-center sticky left-0 z-10">Time</th>
+                                {DAYS.map(day => (
+                                    <th key={day} className="border-r border-b border-slate-200 p-3 bg-slate-50 text-sm font-semibold text-slate-700 min-w-[140px]">
+                                        {day}
+                                    </th>
+                                ))}
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
-                <div className="mt-4 flex gap-4 text-sm text-gray-600">
-                    <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-100 border border-green-500"></div> Regular Course</div>
-                    <div className="flex items-center gap-1"><span className="text-[10px] bg-blue-200 px-1 rounded text-blue-800">COMP</span> Compulsory</div>
-                    <div className="flex items-center gap-1"><div className="w-3 h-3 bg-yellow-100 border border-yellow-500"></div> Carryover Course</div>
-                    <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-100 border border-red-500"></div> Clash Detected</div>
+                        </thead>
+                        <tbody>
+                            {TIMES.map(time => (
+                                <tr key={time}>
+                                    <td className="border-r border-b border-slate-200 p-2 font-semibold text-xs text-slate-600 text-center bg-slate-50 sticky left-0 z-10">
+                                        {time}
+                                    </td>
+                                    {DAYS.map(day => {
+                                        const slotCourses = scheduled.filter(c => c.day === day && to12Hour(c.time) === time);
+                                        return (
+                                            <td key={`${day}-${time}`} className="border-r border-b border-slate-200 p-2 h-28 align-top">
+                                                {slotCourses.map((course, idx) => {
+                                                    const styles = courseTypeStyles[course.type] || courseTypeStyles.Lecture;
+                                                    const hasClash = course.clash_warning;
+                                                    const isCarryover = course.is_carryover;
+                                                    
+                                                    return (
+                                                        <div
+                                                            key={`${course.code}-${idx}`}
+                                                            className={`p-3 rounded-lg text-xs mb-2 border-l-4 shadow-sm relative ${
+                                                                hasClash 
+                                                                    ? 'bg-red-50 border-red-500' 
+                                                                    : isCarryover
+                                                                        ? 'bg-amber-50 border-amber-400'
+                                                                        : `${styles.bg} ${styles.border}`
+                                                            }`}
+                                                        >
+                                                            {/* Warning Badge */}
+                                                            {hasClash && (
+                                                                <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold animate-pulse" title="Schedule Conflict!">
+                                                                    !
+                                                                </div>
+                                                            )}
+                                                            
+                                                            <div className="flex items-center justify-between gap-1 mb-1">
+                                                                <span className={`font-bold ${hasClash ? 'text-red-900' : isCarryover ? 'text-amber-900' : styles.text}`}>
+                                                                    {course.code}
+                                                                </span>
+                                                                <div className="flex items-center gap-1">
+                                                                    {course.is_compulsory && (
+                                                                        <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[9px] font-bold rounded">
+                                                                            COMP
+                                                                        </span>
+                                                                    )}
+                                                                    {isCarryover && (
+                                                                        <span className="px-1.5 py-0.5 bg-amber-200 text-amber-800 text-[9px] font-bold rounded">
+                                                                            CO
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                            
+                                                            <div className={`text-[11px] line-clamp-2 ${hasClash ? 'text-red-700' : 'text-slate-600'}`}>
+                                                                {course.title}
+                                                            </div>
+                                                            
+                                                            <div className={`text-[10px] mt-1.5 flex items-center gap-1 ${hasClash ? 'text-red-600' : 'text-slate-500'}`}>
+                                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                                </svg>
+                                                                {course.venue || 'TBA'}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* Legend */}
+                <div className="p-4 bg-slate-50 border-t border-slate-200">
+                    <div className="flex flex-wrap gap-4 text-sm">
+                        <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded bg-emerald-50 border-2 border-emerald-400"></div>
+                            <span className="text-slate-600">Lecture</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded bg-purple-50 border-2 border-purple-400"></div>
+                            <span className="text-slate-600">Exam</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded bg-amber-50 border-2 border-amber-400"></div>
+                            <span className="text-slate-600">Test</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-xs font-bold rounded">COMP</span>
+                            <span className="text-slate-600">Compulsory</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="px-1.5 py-0.5 bg-amber-200 text-amber-800 text-xs font-bold rounded">CO</span>
+                            <span className="text-slate-600">Carryover</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="w-4 h-4 flex items-center justify-center bg-red-500 text-white text-[10px] font-bold rounded-full">!</span>
+                            <span className="text-slate-600">Schedule Conflict</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

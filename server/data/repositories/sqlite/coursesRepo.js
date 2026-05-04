@@ -32,8 +32,8 @@ const list = async ({ timetableId } = {}) => {
 
 const create = async (course) => {
     const item = toRow(course);
-    const sql = `INSERT INTO courses (code, title, college, department, level, lecturers, units, semester, type, is_compulsory, preferred_day, preferred_time, venue, duration, student_count, custom_data, timetable_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    const sql = `INSERT INTO courses (code, title, college, department, level, lecturers, units, semester, type, is_compulsory, preferred_day, preferred_time, venue, duration, custom_data, timetable_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
     const params = [
         item.code,
         item.title,
@@ -49,7 +49,6 @@ const create = async (course) => {
         item.preferred_time || 'AUTO',
         item.venue || '',
         item.duration,
-        item.student_count || 0,
         item.custom_data,
         item.timetable_id
     ];
@@ -57,4 +56,42 @@ const create = async (course) => {
     return runAsync(sql, params);
 };
 
-module.exports = { listByTimetableId, list, create };
+const getById = async (id) => {
+    const row = await getAsync('SELECT * FROM courses WHERE id = ?', [id]);
+    return row ? fromRow(row) : null;
+};
+
+const update = async (id, course) => {
+    const item = toRow(course);
+    const sql = `UPDATE courses SET
+        code = ?, title = ?, college = ?, department = ?, level = ?, lecturers = ?, units = ?,
+        semester = ?, type = ?, is_compulsory = ?, preferred_day = ?, preferred_time = ?,
+        venue = ?, duration = ?, custom_data = ?, timetable_id = ?
+        WHERE id = ?`;
+    const params = [
+        item.code,
+        item.title,
+        item.college || null,
+        item.department,
+        item.level,
+        item.lecturers,
+        item.units,
+        item.semester,
+        item.type,
+        item.is_compulsory,
+        item.preferred_day || 'AUTO',
+        item.preferred_time || 'AUTO',
+        item.venue || '',
+        item.duration,
+        item.custom_data,
+        item.timetable_id,
+        id
+    ];
+    return runAsync(sql, params);
+};
+
+const remove = async (id) => {
+    return runAsync('DELETE FROM courses WHERE id = ?', [id]);
+};
+
+module.exports = { listByTimetableId, list, create, getById, update, remove };

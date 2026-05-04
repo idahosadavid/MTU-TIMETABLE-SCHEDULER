@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import Dashboard from './Dashboard';
 import API_BASE_URL from '../apiBase';
 import { adminHeaders } from '../adminAuth';
 import FloatingNotice from './FloatingNotice';
@@ -8,6 +7,57 @@ import getNoticeTimeoutMs from '../noticeTimeout';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 const TIMES = ['9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM', '6:00 PM'];
+
+// Course type color schemes
+const courseTypeStyles = {
+    Lecture: {
+        bg: 'bg-emerald-50',
+        border: 'border-emerald-400',
+        text: 'text-emerald-900',
+        badge: 'bg-emerald-100 text-emerald-700',
+        hover: 'hover:bg-emerald-100'
+    },
+    Exam: {
+        bg: 'bg-purple-50',
+        border: 'border-purple-400',
+        text: 'text-purple-900',
+        badge: 'bg-purple-100 text-purple-700',
+        hover: 'hover:bg-purple-100'
+    },
+    Test: {
+        bg: 'bg-amber-50',
+        border: 'border-amber-400',
+        text: 'text-amber-900',
+        badge: 'bg-amber-100 text-amber-700',
+        hover: 'hover:bg-amber-100'
+    }
+};
+
+// Legend component
+const Legend = () => (
+    <div className="flex flex-wrap gap-4 text-sm text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-200">
+        <div className="flex items-center gap-2">
+            <div className="w-4 h-4 rounded bg-emerald-50 border-2 border-emerald-400"></div>
+            <span>Lecture</span>
+        </div>
+        <div className="flex items-center gap-2">
+            <div className="w-4 h-4 rounded bg-purple-50 border-2 border-purple-400"></div>
+            <span>Exam</span>
+        </div>
+        <div className="flex items-center gap-2">
+            <div className="w-4 h-4 rounded bg-amber-50 border-2 border-amber-400"></div>
+            <span>Test</span>
+        </div>
+        <div className="flex items-center gap-2">
+            <span className="px-1.5 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded">!</span>
+            <span>Clash Warning</span>
+        </div>
+        <div className="flex items-center gap-2">
+            <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-xs font-bold rounded">COMP</span>
+            <span>Compulsory</span>
+        </div>
+    </div>
+);
 
 // Convert stored 24-hour time (e.g. '13:00') to 12-hour AM/PM (e.g. '1:00 PM')
 const to12Hour = (t) => {
@@ -43,7 +93,10 @@ const TimetableView = () => {
     const [scheduled, setScheduled] = useState([]);
     const [unscheduled, setUnscheduled] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [viewMode, setViewMode] = useState('timetable'); // 'timetable' or 'courses'
+    const [viewMode, setViewMode] = useState('timetable'); // 'timetable' or 'assign'
+    const [masterCourses, setMasterCourses] = useState([]);
+    const [assignedCourseIds, setAssignedCourseIds] = useState(new Set());
+    const [poolLoading, setPoolLoading] = useState(false);
     const [exportFormat, setExportFormat] = useState('excel');
     const [exportDepartment, setExportDepartment] = useState('');
     const [exportLevel, setExportLevel] = useState('');
@@ -222,6 +275,89 @@ const TimetableView = () => {
         }
     };
 
+    // Course Pool Assignment Functions
+    const fetchPoolData = async () => {
+        setPoolLoading(true);
+        try {
+            const [masterRes, timetableRes] = await Promise.all([
+                fetch(`${API_BASE_URL}/courses/master`, { headers: adminHeaders() }),
+                fetch(`${API_BASE_URL}/timetables/${timetableId}/courses`, { headers: adminHeaders() })
+            ]);
+            const masterData = await masterRes.json();
+            const timetableData = await timetableRes.json();
+
+            setMasterCourses(masterData.data || []);
+            const assignedIds = new Set((timetableData.data || []).map(c => c.id));
+            setAssignedCourseIds(assignedIds);
+        } catch (err) {
+            console.error('Failed to fetch pool data:', err);
+            setActionNotice({ message: 'Failed to load course pool.', type: 'error' });
+        } finally {
+            setPoolLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (viewMode === 'assign') {
+            fetchPoolData();
+        }
+    }, [viewMode, timetableId]);
+
+    const handleAssignCourse = async (courseId) => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/timetables/${timetableId}/courses`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                body: JSON.stringify({ course_id: courseId })
+            });
+            if (!response.ok) throw new Error('Assignment failed');
+
+            setAssignedCourseIds(prev => new Set([...prev, courseId]));
+            setActionNotice({ message: 'Course assigned to timetable.', type: 'success' });
+        } catch (err) {
+            setActionNotice({ message: err.message, type: 'error' });
+        }
+    };
+
+    const handleRemoveCourse = async (courseId) => {
+        if (!window.confirm('Remove this course from the timetable?')) return;
+        try {
+            const response = await fetch(`${API_BASE_URL}/timetables/${timetableId}/courses/${courseId}`, {
+                method: 'DELETE',
+                headers: adminHeaders()
+            });
+            if (!response.ok) throw new Error('Removal failed');
+
+            setAssignedCourseIds(prev => {
+                const next = new Set(prev);
+                next.delete(courseId);
+                return next;
+            });
+            setActionNotice({ message: 'Course removed from timetable.', type: 'success' });
+        } catch (err) {
+            setActionNotice({ message: err.message, type: 'error' });
+        }
+    };
+
+    const handleGenerate = async () => {
+        try {
+            setPoolLoading(true);
+            const response = await fetch(`${API_BASE_URL}/timetables/${timetableId}/generate`, {
+                method: 'POST',
+                headers: adminHeaders()
+            });
+            if (!response.ok) throw new Error('Generation failed');
+
+            setActionNotice({ message: 'Timetable generated successfully!', type: 'success' });
+            setViewMode('timetable');
+            fetchTimetable();
+        } catch (err) {
+            setActionNotice({ message: err.message, type: 'error' });
+        } finally {
+            setPoolLoading(false);
+        }
+    };
+
     const handleExport = async () => {
         try {
             const query = new URLSearchParams({ format: exportFormat });
@@ -253,17 +389,27 @@ const TimetableView = () => {
     const departments = Array.from(new Set(scheduled.map(item => item.department).filter(Boolean)));
 
     if (loading) {
-        return <div className="p-6">Loading timetable...</div>;
+        return (
+            <div className="flex items-center justify-center min-h-[50vh]">
+                <div className="animate-pulse text-slate-500">Loading timetable...</div>
+            </div>
+        );
     }
 
     if (!timetable) {
-        return <div className="p-6 text-red-600">Error: Timetable not found.</div>;
+        return (
+            <div className="flex items-center justify-center min-h-[50vh]">
+                <div className="bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-xl">
+                    Error: Timetable not found.
+                </div>
+            </div>
+        );
     }
 
     const isTimetableEmpty = !scheduled || (scheduled.length === 0 && unscheduled.length === 0);
 
     return (
-        <div className="p-6">
+        <div className="space-y-6">
             <FloatingNotice
                 message={changeNotice}
                 type="info"
@@ -281,201 +427,539 @@ const TimetableView = () => {
                 onDismiss={() => setActionNotice({ message: '', type: 'info' })}
                 stackIndex={0}
             />
-            <div className="flex items-center justify-between mb-4">
-                <div>
-                    <Link to="/" className="text-blue-600 hover:underline mb-2 inline-block">&larr; Back to List</Link>
-                    <h2 className="text-2xl font-bold text-blue-900">{timetable.name}</h2>
-                    <p className="text-sm text-gray-600">{timetable.academic_session} - {timetable.semester} Semester ({timetable.type})</p>
-                    {lastCheckedAt && (
-                        <p className="mt-1 text-xs text-gray-500">
-                            Last checked: {lastCheckedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                        </p>
-                    )}
-                </div>
-                <div className="space-x-2">
-                    <button
-                        onClick={() => {
-                            setViewMode('timetable');
-                            fetchTimetable();
-                        }}
-                        className={`px-4 py-2 rounded ${viewMode === 'timetable' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-                    >
-                        View Timetable
-                    </button>
-                    <button
-                        onClick={() => setViewMode('courses')}
-                        className={`px-4 py-2 rounded ${viewMode === 'courses' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-                    >
-                        Manage Courses
-                    </button>
-                </div>
-            </div>
 
-            <div className="mb-4 p-3 border rounded bg-gray-50 flex flex-wrap items-center gap-2">
-                <span className="font-semibold text-sm text-gray-700">Download:</span>
-                <select value={exportFormat} onChange={(e) => setExportFormat(e.target.value)} className="border p-2 rounded text-sm">
-                    <option value="excel">Excel</option>
-                    <option value="pdf">PDF</option>
-                    <option value="word">Word</option>
-                </select>
-                <select value={exportDepartment} onChange={(e) => setExportDepartment(e.target.value)} className="border p-2 rounded text-sm">
-                    <option value="">All Departments</option>
-                    {departments.map(dep => <option key={dep} value={dep}>{dep}</option>)}
-                </select>
-                <select value={exportLevel} onChange={(e) => setExportLevel(e.target.value)} className="border p-2 rounded text-sm">
-                    <option value="">All Levels</option>
-                    <option value="100">100</option>
-                    <option value="200">200</option>
-                    <option value="300">300</option>
-                    <option value="400">400</option>
-                    <option value="500">500</option>
-                </select>
-                <button onClick={handleExport} className="bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700">Export</button>
+            {/* Header Section */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    <div>
+                        <Link to="/" className="inline-flex items-center text-sm text-slate-500 hover:text-[#4c1d95] mb-2 transition-colors">
+                            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+                            </svg>
+                            Back to List
+                        </Link>
+                        <h1 className="text-2xl lg:text-3xl font-bold text-slate-900">{timetable.name}</h1>
+                        <p className="text-slate-500 mt-1">
+                            {timetable.academic_session} • {timetable.semester} Semester • 
+                            <span className={`ml-1 px-2 py-0.5 rounded text-xs font-medium ${
+                                timetable.type === 'Lecture' ? 'bg-emerald-100 text-emerald-700' :
+                                timetable.type === 'Exam' ? 'bg-purple-100 text-purple-700' :
+                                'bg-amber-100 text-amber-700'
+                            }`}>
+                                {timetable.type}
+                            </span>
+                        </p>
+                        {lastCheckedAt && (
+                            <p className="text-xs text-slate-400 mt-2">
+                                Last updated: {lastCheckedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                        )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                        <button
+                            onClick={() => {
+                                setViewMode('timetable');
+                                fetchTimetable();
+                            }}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                                viewMode === 'timetable' 
+                                    ? 'bg-[#4c1d95] text-white shadow-md' 
+                                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                            }`}
+                        >
+                            <span className="flex items-center gap-2">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                                View Timetable
+                            </span>
+                        </button>
+                        <button
+                            onClick={() => setViewMode('assign')}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                                viewMode === 'assign'
+                                    ? 'bg-[#4c1d95] text-white shadow-md'
+                                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                            }`}
+                        >
+                            <span className="flex items-center gap-2">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                                </svg>
+                                Assign Courses
+                            </span>
+                        </button>
+                    </div>
+                </div>
+
+                {/* Export Controls */}
+                <div className="mt-6 pt-6 border-t border-slate-100 flex flex-wrap items-center gap-3">
+                    <span className="text-sm font-medium text-slate-600">Export:</span>
+                    <select 
+                        value={exportFormat} 
+                        onChange={(e) => setExportFormat(e.target.value)} 
+                        className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
+                    >
+                        <option value="excel">Excel (.xlsx)</option>
+                        <option value="pdf">PDF Document</option>
+                        <option value="word">Word Document</option>
+                    </select>
+                    <select 
+                        value={exportDepartment} 
+                        onChange={(e) => setExportDepartment(e.target.value)} 
+                        className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
+                    >
+                        <option value="">All Departments</option>
+                        {departments.map(dep => <option key={dep} value={dep}>{dep}</option>)}
+                    </select>
+                    <select 
+                        value={exportLevel} 
+                        onChange={(e) => setExportLevel(e.target.value)} 
+                        className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
+                    >
+                        <option value="">All Levels</option>
+                        <option value="100">100 Level</option>
+                        <option value="200">200 Level</option>
+                        <option value="300">300 Level</option>
+                        <option value="400">400 Level</option>
+                        <option value="500">500 Level</option>
+                    </select>
+                    <button 
+                        onClick={handleExport} 
+                        className="flex items-center gap-2 px-4 py-2 bg-[#059669] text-white rounded-lg hover:bg-[#047857] text-sm font-medium transition-colors shadow-sm"
+                    >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        Export
+                    </button>
+                </div>
             </div>
 
             {
-                viewMode === 'courses' ? (
-                    <Dashboard timetableId={timetableId} />
+                viewMode === 'assign' ? (
+                    <CourseAssignmentPanel
+                        timetableId={timetableId}
+                        masterCourses={masterCourses}
+                        assignedCourseIds={assignedCourseIds}
+                        onAssign={handleAssignCourse}
+                        onRemove={handleRemoveCourse}
+                        onGenerate={handleGenerate}
+                        loading={poolLoading}
+                    />
                 ) : (
                     <>
                         {isTimetableEmpty ? (
-                            <div className="p-4 text-gray-500 bg-gray-50 border rounded">
-                                <div>No timetable generated yet.</div>
-                                <div className="mt-2 text-sm">
-                                    Go to <strong>Manage Courses</strong> to add courses, then click user generic buttons to generate.
+                            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center">
+                                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                    </svg>
                                 </div>
+                                <h3 className="text-lg font-semibold text-slate-700 mb-2">No Timetable Generated Yet</h3>
+                                <p className="text-slate-500 text-sm mb-4">
+                                    Click <strong>Assign Courses</strong> to add courses from the pool, then generate your schedule.
+                                </p>
                                 {unscheduled.length > 0 && (
-                                    <div className="mt-4">
-                                        <h3 className="text-lg font-bold text-red-600">Unscheduled Courses</h3>
-                                        <ul className="list-disc pl-5">
-                                            {unscheduled.map((course, idx) => (
-                                                <li key={idx} className="text-red-500">
-                                                    {course.code} - {course.title} (Reason: Conflict)
+                                    <div className="mt-6 bg-red-50 border border-red-200 rounded-lg p-4 max-w-md mx-auto">
+                                        <h4 className="font-semibold text-red-700 flex items-center gap-2 mb-2">
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                            </svg>
+                                            Unscheduled Courses ({unscheduled.length})
+                                        </h4>
+                                        <ul className="text-left text-sm text-red-600 space-y-1">
+                                            {unscheduled.slice(0, 5).map((course, idx) => (
+                                                <li key={idx} className="flex items-center gap-2">
+                                                    <span className="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
+                                                    {course.code} - {course.title}
                                                 </li>
                                             ))}
+                                            {unscheduled.length > 5 && (
+                                                <li className="text-red-400 italic">+ {unscheduled.length - 5} more</li>
+                                            )}
                                         </ul>
                                     </div>
                                 )}
                             </div>
                         ) : (
-                            <div className="flex gap-4">
+                            <div className="flex flex-col lg:flex-row gap-6">
                                 {/* Unscheduled Courses Sidebar */}
-                                <div className="w-1/4 bg-gray-50 p-4 rounded shadow h-[calc(100vh-200px)] overflow-y-auto">
-                                    <div className="flex justify-between items-center mb-2">
-                                        <h3 className="font-bold text-gray-700">Unscheduled ({unscheduled.length})</h3>
-                                        {unscheduled.length > 0 && (
-                                            <button
-                                                onClick={handleClearUnscheduled}
-                                                className="text-xs text-red-600 hover:text-red-800 underline"
-                                                title="Clear all unscheduled courses (Safely)"
-                                            >
-                                                Clear List
-                                            </button>
-                                        )}
-                                    </div>
-                                    <div
-                                        onDragOver={handleDragOver}
-                                        onDrop={handleDropToUnscheduled}
-                                        className="min-h-[200px] space-y-2"
-                                    >
-                                        {unscheduled.map((course, index) => (
-                                            <div
-                                                key={course.id || index}
-                                                draggable
-                                                onDragStart={(e) => handleDragStart(e, course, 'unscheduled')}
-                                                className="bg-white p-2 rounded shadow text-sm cursor-move border-l-4 border-yellow-400 hover:bg-yellow-50"
-                                            >
-                                                <div className="font-bold flex items-center justify-between gap-1">
-                                                    <span>{course.code}</span>
-                                                    {course.is_compulsory && <span className="text-[10px] bg-blue-200 px-1 rounded text-blue-800">COMP</span>}
+                                <div className="lg:w-72 flex-shrink-0">
+                                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                        <div className="bg-amber-50 border-b border-amber-100 px-4 py-3 flex justify-between items-center">
+                                            <h3 className="font-semibold text-amber-900 flex items-center gap-2">
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                                Unscheduled ({unscheduled.length})
+                                            </h3>
+                                            {unscheduled.length > 0 && (
+                                                <button
+                                                    onClick={handleClearUnscheduled}
+                                                    className="text-xs text-amber-700 hover:text-amber-900 hover:underline"
+                                                    title="Clear all unscheduled courses"
+                                                >
+                                                    Clear
+                                                </button>
+                                            )}
+                                        </div>
+                                        <div
+                                            onDragOver={handleDragOver}
+                                            onDrop={handleDropToUnscheduled}
+                                            className="p-3 space-y-2 min-h-[200px] max-h-[calc(100vh-300px)] overflow-y-auto"
+                                        >
+                                            {unscheduled.length === 0 ? (
+                                                <div className="text-center py-8 text-slate-400 text-sm">
+                                                    <svg className="w-8 h-8 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                    </svg>
+                                                    All courses scheduled!
                                                 </div>
-                                                <div className="text-xs text-gray-600">{course.title}</div>
-                                                <div className="text-xs text-gray-500">{course.duration / 60}h • {course.student_count} students</div>
-                                            </div>
-                                        ))}
+                                            ) : (
+                                                unscheduled.map((course, index) => (
+                                                    <div
+                                                        key={course.id || index}
+                                                        draggable
+                                                        onDragStart={(e) => handleDragStart(e, course, 'unscheduled')}
+                                                        className="bg-white border border-amber-200 p-3 rounded-lg cursor-move hover:shadow-md hover:border-amber-300 transition-all group"
+                                                    >
+                                                        <div className="flex items-center justify-between mb-1">
+                                                            <span className="font-semibold text-slate-800">{course.code}</span>
+                                                            {course.is_compulsory && (
+                                                                <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded">
+                                                                    COMP
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div className="text-xs text-slate-600 line-clamp-1">{course.title}</div>
+                                                        <div className="text-xs text-slate-400 mt-1 flex items-center gap-2">
+                                                            <span>{course.duration / 60}h</span>
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="mt-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
+                                        <p className="text-xs text-slate-500">
+                                            <strong>Tip:</strong> Drag and drop courses from here onto the timetable grid to schedule them.
+                                        </p>
                                     </div>
                                 </div>
 
                                 {/* Timetable Grid */}
-                                <div className="w-3/4 overflow-x-auto">
-                                    <table className="min-w-full border-collapse border border-gray-300">
-                                        <thead>
-                                            <tr>
-                                                <th className="border border-gray-300 p-2 bg-gray-100 w-20">Time</th>
-                                                {DAYS.map(day => (
-                                                    <th key={day} className="border border-gray-300 p-2 bg-gray-100">{day}</th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {TIMES.map(time => (
-                                                <tr key={time}>
-                                                    <td className="border border-gray-300 p-2 font-bold text-center bg-gray-50">{time}</td>
-                                                    {DAYS.map(day => {
-                                                        const slotCourses = scheduled.filter(c => c.day === day && to12Hour(c.time) === time);
-                                                        return (
-                                                            <td
-                                                                key={`${day}-${time}`}
-                                                                className="border border-gray-300 p-1 h-24 align-top relative"
-                                                                onDragOver={handleDragOver}
-                                                                onDrop={(e) => handleDrop(e, 'scheduled', day, to24Hour(time))}
-                                                            >
-                                                                {slotCourses.map((course, idx) => (
-                                                                    <div
-                                                                        key={`${course.code}-${idx}`}
-                                                                        draggable
-                                                                        onDragStart={(e) => handleDragStart(e, course, 'scheduled')}
-                                                                        className="bg-blue-100 p-1 rounded text-xs mb-1 border-l-4 border-blue-500 cursor-move hover:bg-blue-200 relative group"
-                                                                        title={`${course.title} (${course.lecturers})`}
-                                                                    >
-                                                                        <div className="font-bold flex items-center justify-between gap-1">
-                                                                            <span>{course.code}</span>
-                                                                            {course.is_compulsory && <span className="text-[10px] bg-blue-200 px-1 rounded text-blue-800">COMP</span>}
-                                                                        </div>
-                                                                        <div>{course.venue}</div>
-
-                                                                        {/* Remove Button (Hover) */}
-                                                                        <button
-                                                                            onClick={(e) => {
-                                                                                e.stopPropagation();
-                                                                                // Move back to unscheduled
-                                                                                const newScheduled = scheduled.filter(c => c !== course);
-                                                                                const newUnscheduled = [...unscheduled, course];
-                                                                                setScheduled(newScheduled);
-                                                                                setUnscheduled(newUnscheduled);
-                                                                                suppressNextNotificationRef.current = true;
-                                                                                // Save immediately
-                                                                                fetch(`${API_BASE_URL}/timetables/${timetableId}/save`, {
-                                                                                    method: 'POST',
-                                                                                    headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-                                                                                    body: JSON.stringify({ scheduled: newScheduled, unscheduled: newUnscheduled })
-                                                                                });
-                                                                            }}
-                                                                            className="absolute top-0 right-0 text-red-500 hover:text-red-700 p-1 opacity-0 group-hover:opacity-100"
-                                                                            title="Remove from slot"
-                                                                        >
-                                                                            ×
-                                                                        </button>
-                                                                    </div>
-                                                                ))}
+                                <div className="flex-1 min-w-0">
+                                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                        <div className="p-4 border-b border-slate-200">
+                                            <Legend />
+                                        </div>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full border-collapse">
+                                                <thead>
+                                                    <tr>
+                                                        <th className="border-r border-b border-slate-200 p-3 bg-slate-50 text-xs font-semibold text-slate-600 w-20 text-center sticky left-0 z-10">Time</th>
+                                                        {DAYS.map(day => (
+                                                            <th key={day} className="border-r border-b border-slate-200 p-3 bg-slate-50 text-sm font-semibold text-slate-700 min-w-[140px]">
+                                                                {day}
+                                                            </th>
+                                                        ))}
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {TIMES.map(time => (
+                                                        <tr key={time}>
+                                                            <td className="border-r border-b border-slate-200 p-2 font-semibold text-xs text-slate-600 text-center bg-slate-50 sticky left-0 z-10">
+                                                                {time}
                                                             </td>
-                                                        );
-                                                    })}
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
+                                                            {DAYS.map(day => {
+                                                                const slotCourses = scheduled.filter(c => c.day === day && to12Hour(c.time) === time);
+                                                                const hasConflict = slotCourses.some(c => c.clash_warning);
+                                                                return (
+                                                                    <td
+                                                                        key={`${day}-${time}`}
+                                                                        className={`border-r border-b border-slate-200 p-2 h-28 align-top relative transition-colors ${
+                                                                            hasConflict ? 'bg-red-50/50' : 'hover:bg-slate-50'
+                                                                        }`}
+                                                                        onDragOver={handleDragOver}
+                                                                        onDrop={(e) => handleDrop(e, day, to24Hour(time))}
+                                                                    >
+                                                                        {slotCourses.map((course, idx) => {
+                                                                            const styles = courseTypeStyles[course.type] || courseTypeStyles.Lecture;
+                                                                            const hasClash = course.clash_warning;
+                                                                            return (
+                                                                                <div
+                                                                                    key={`${course.code}-${idx}`}
+                                                                                    draggable
+                                                                                    onDragStart={(e) => handleDragStart(e, course, 'scheduled')}
+                                                                                    className={`p-2.5 rounded-lg text-xs mb-2 border-l-4 cursor-move relative group shadow-sm transition-all ${
+                                                                                        hasClash 
+                                                                                            ? 'bg-red-50 border-red-400 hover:bg-red-100' 
+                                                                                            : `${styles.bg} ${styles.border} ${styles.hover}`
+                                                                                    }`}
+                                                                                    title={`${course.title}\nLecturer: ${course.lecturers}\nVenue: ${course.venue}`}
+                                                                                >
+                                                                                    {/* Clash Warning Badge */}
+                                                                                    {hasClash && (
+                                                                                        <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm animate-pulse">
+                                                                                            !
+                                                                                        </div>
+                                                                                    )}
+                                                                                    
+                                                                                    <div className="flex items-center justify-between gap-1 mb-1">
+                                                                                        <span className={`font-bold ${hasClash ? 'text-red-900' : styles.text}`}>
+                                                                                            {course.code}
+                                                                                        </span>
+                                                                                        <div className="flex items-center gap-1">
+                                                                                            {course.is_compulsory && (
+                                                                                                <span className="px-1 py-0.5 bg-blue-100 text-blue-700 text-[9px] font-bold rounded">
+                                                                                                    COMP
+                                                                                                </span>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                    
+                                                                                    <div className={`text-[10px] line-clamp-1 ${hasClash ? 'text-red-700' : 'text-slate-600'}`}>
+                                                                                        {course.title}
+                                                                                    </div>
+                                                                                    
+                                                                                    <div className={`text-[10px] mt-1.5 flex items-center gap-1 ${hasClash ? 'text-red-600' : 'text-slate-500'}`}>
+                                                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                                                        </svg>
+                                                                                        {course.venue || 'Unassigned'}
+                                                                                    </div>
+
+                                                                                    {/* Remove Button */}
+                                                                                    <button
+                                                                                        onClick={(e) => {
+                                                                                            e.stopPropagation();
+                                                                                            const newScheduled = scheduled.filter(c => c !== course);
+                                                                                            const newUnscheduled = [...unscheduled, course];
+                                                                                            setScheduled(newScheduled);
+                                                                                            setUnscheduled(newUnscheduled);
+                                                                                            suppressNextNotificationRef.current = true;
+                                                                                            fetch(`${API_BASE_URL}/timetables/${timetableId}/save`, {
+                                                                                                method: 'POST',
+                                                                                                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                                                                                                body: JSON.stringify({ scheduled: newScheduled, unscheduled: newUnscheduled })
+                                                                                            });
+                                                                                        }}
+                                                                                        className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-600"
+                                                                                        title="Remove from slot"
+                                                                                    >
+                                                                                        ×
+                                                                                    </button>
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                    </td>
+                                                                );
+                                                            })}
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         )}
-                        <div className="mt-3 text-xs text-gray-600">
-                            <span className="bg-blue-200 px-1 rounded text-blue-800 mr-1">COMP</span>
-                            Compulsory course
-                        </div>
                     </>
                 )
             }
-        </div >
+        </div>
+    );
+};
+
+// Course Assignment Panel Component
+const CourseAssignmentPanel = ({ timetableId, masterCourses, assignedCourseIds, onAssign, onRemove, onGenerate, loading }) => {
+    const [searchTerm, setSearchTerm] = useState('');
+    const [filterDept, setFilterDept] = useState('');
+
+    const departments = [...new Set(masterCourses.map(c => c.department))].sort();
+
+    const filteredMasterCourses = masterCourses.filter(course => {
+        const matchesSearch = !searchTerm ||
+            course.code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            course.title?.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesDept = !filterDept || course.department === filterDept;
+        return matchesSearch && matchesDept;
+    });
+
+    const availableCourses = filteredMasterCourses.filter(c => !assignedCourseIds.has(c.id));
+    const assignedCourses = filteredMasterCourses.filter(c => assignedCourseIds.has(c.id));
+
+    return (
+        <div className="space-y-6">
+            {/* Header */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <h2 className="text-lg font-semibold text-slate-800">Assign Courses from Pool</h2>
+                        <p className="text-slate-500 text-sm mt-1">
+                            Add courses from the master pool to this timetable, then generate the schedule.
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm text-slate-500">
+                            <strong className="text-[#4c1d95]">{assignedCourseIds.size}</strong> courses assigned
+                        </span>
+                        <button
+                            onClick={onGenerate}
+                            disabled={assignedCourseIds.size === 0 || loading}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                                assignedCourseIds.size === 0 || loading
+                                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                    : 'bg-[#4c1d95] text-white hover:bg-[#3c1780] shadow-md'
+                            }`}
+                        >
+                            {loading ? (
+                                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                                </svg>
+                            ) : (
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/>
+                                </svg>
+                            )}
+                            Generate Timetable
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {/* Filters */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <input
+                        type="text"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        placeholder="Search by code or title..."
+                        className="px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent"
+                    />
+                    <select
+                        value={filterDept}
+                        onChange={(e) => setFilterDept(e.target.value)}
+                        className="px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent"
+                    >
+                        <option value="">All Departments</option>
+                        {departments.map(dept => (
+                            <option key={dept} value={dept}>{dept}</option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+
+            {/* Two Column Layout */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Available Courses */}
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="p-4 bg-slate-50 border-b border-slate-200">
+                        <h3 className="font-semibold text-slate-700 flex items-center gap-2">
+                            <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
+                            Available from Pool
+                            <span className="text-sm font-normal text-slate-500">({availableCourses.length})</span>
+                        </h3>
+                    </div>
+                    <div className="p-4 max-h-[500px] overflow-y-auto space-y-2">
+                        {loading ? (
+                            <div className="text-center py-8 text-slate-400">
+                                <svg className="animate-spin h-6 w-6 mx-auto mb-2" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                                </svg>
+                                Loading...
+                            </div>
+                        ) : availableCourses.length === 0 ? (
+                            <div className="text-center py-8 text-slate-400">
+                                <svg className="w-12 h-12 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                <p>All courses assigned!</p>
+                                <p className="text-xs mt-1">Add more courses to the pool from Admin Setup</p>
+                            </div>
+                        ) : (
+                            availableCourses.map(course => (
+                                <div key={course.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-emerald-300 transition-colors">
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-bold rounded">{course.code}</span>
+                                            <span className="text-sm font-medium text-slate-800 truncate">{course.title}</span>
+                                        </div>
+                                        <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
+                                            <span className="px-1.5 py-0.5 bg-slate-200 rounded">{course.department}</span>
+                                            <span>Level {course.level}</span>
+                                            <span>{course.duration / 60}h</span>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => onAssign(course.id)}
+                                        className="flex-shrink-0 ml-2 p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                        title="Assign to timetable"
+                                    >
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+
+                {/* Assigned Courses */}
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="p-4 bg-emerald-50 border-b border-emerald-200">
+                        <h3 className="font-semibold text-emerald-800 flex items-center gap-2">
+                            <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
+                            Assigned to This Timetable
+                            <span className="text-sm font-normal text-emerald-600">({assignedCourses.length})</span>
+                        </h3>
+                    </div>
+                    <div className="p-4 max-h-[500px] overflow-y-auto space-y-2">
+                        {assignedCourses.length === 0 ? (
+                            <div className="text-center py-8 text-slate-400">
+                                <svg className="w-12 h-12 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                </svg>
+                                <p>No courses assigned yet</p>
+                                <p className="text-xs mt-1">Select courses from the left to add them</p>
+                            </div>
+                        ) : (
+                            assignedCourses.map(course => (
+                                <div key={course.id} className="flex items-center justify-between p-3 bg-emerald-50 rounded-lg border border-emerald-200">
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs font-bold rounded">{course.code}</span>
+                                            <span className="text-sm font-medium text-slate-800 truncate">{course.title}</span>
+                                        </div>
+                                        <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
+                                            <span className="px-1.5 py-0.5 bg-emerald-200 rounded">{course.department}</span>
+                                            <span>Level {course.level}</span>
+                                            <span>{course.duration / 60}h</span>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => onRemove(course.id)}
+                                        className="flex-shrink-0 ml-2 p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                        title="Remove from timetable"
+                                    >
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
     );
 };
 

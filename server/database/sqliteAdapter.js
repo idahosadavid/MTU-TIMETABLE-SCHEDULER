@@ -28,7 +28,6 @@ const initSqliteDatabase = () => {
       preferred_time TEXT,
       venue TEXT,
       duration INTEGER,
-      student_count INTEGER,
       custom_data TEXT,
       timetable_id INTEGER,
       FOREIGN KEY(timetable_id) REFERENCES timetables(id) ON DELETE CASCADE
@@ -174,6 +173,17 @@ const initSqliteDatabase = () => {
             remarks TEXT,
             session TEXT,
             FOREIGN KEY(student_matric) REFERENCES students(matric_number) ON DELETE CASCADE
+        )`);
+
+        // Junction table for course-timetable relationships (many-to-many)
+        db.run(`CREATE TABLE IF NOT EXISTS timetable_courses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timetable_id INTEGER NOT NULL,
+            course_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(timetable_id) REFERENCES timetables(id) ON DELETE CASCADE,
+            FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            UNIQUE(timetable_id, course_id)
         )`);
     });
 };

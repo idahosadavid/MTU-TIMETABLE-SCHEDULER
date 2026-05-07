@@ -6,7 +6,7 @@ import FloatingNotice from './FloatingNotice';
 import getNoticeTimeoutMs from '../noticeTimeout';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-const TIMES = ['9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM', '6:00 PM'];
+const TIMES = ['9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM', '6:00 PM', '7:00 PM'];
 
 // Course type color schemes
 const courseTypeStyles = {
@@ -275,6 +275,8 @@ const TimetableView = () => {
         }
     };
 
+
+
     // Course Pool Assignment Functions
     const fetchPoolData = async () => {
         setPoolLoading(true);
@@ -286,8 +288,11 @@ const TimetableView = () => {
             const masterData = await masterRes.json();
             const timetableData = await timetableRes.json();
 
-            setMasterCourses(masterData.data || []);
-            const assignedIds = new Set((timetableData.data || []).map(c => c.id));
+            const unassignedCourses = masterData.data || [];
+            const assignedCourses = timetableData.data || [];
+            
+            setMasterCourses([...unassignedCourses, ...assignedCourses]);
+            const assignedIds = new Set(assignedCourses.map(c => c.id));
             setAssignedCourseIds(assignedIds);
         } catch (err) {
             console.error('Failed to fetch pool data:', err);
@@ -302,6 +307,19 @@ const TimetableView = () => {
             fetchPoolData();
         }
     }, [viewMode, timetableId]);
+
+    // Fetch assigned course count on mount so the Generate button state is correct
+    // even before the user visits the Assign Courses tab.
+    useEffect(() => {
+        if (!timetableId) return;
+        fetch(`${API_BASE_URL}/timetables/${timetableId}/courses`, { headers: adminHeaders() })
+            .then(res => res.json())
+            .then(data => {
+                const assignedCourses = data.data || [];
+                setAssignedCourseIds(new Set(assignedCourses.map(c => c.id)));
+            })
+            .catch(err => console.error('Failed to fetch assigned courses count:', err));
+    }, [timetableId]);
 
     const handleAssignCourse = async (courseId) => {
         try {
@@ -342,11 +360,20 @@ const TimetableView = () => {
     const handleGenerate = async () => {
         try {
             setPoolLoading(true);
-            const response = await fetch(`${API_BASE_URL}/timetables/${timetableId}/generate`, {
+            const typeEndpoint = timetable?.type ? timetable.type.toLowerCase() + 's' : 'lectures';
+            const response = await fetch(`${API_BASE_URL}/generate/${typeEndpoint}`, {
                 method: 'POST',
-                headers: adminHeaders()
+                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                body: JSON.stringify({
+                    timetable_id: timetableId,
+                    scope: 'college' // Default to college scope from TimetableView
+                })
             });
-            if (!response.ok) throw new Error('Generation failed');
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Generation failed');
+            }
 
             setActionNotice({ message: 'Timetable generated successfully!', type: 'success' });
             setViewMode('timetable');
@@ -358,29 +385,27 @@ const TimetableView = () => {
         }
     };
 
-    const handleExport = async () => {
+    const handleExport = () => {
         try {
             const query = new URLSearchParams({ format: exportFormat });
             if (exportDepartment) query.append('department', exportDepartment);
             if (exportLevel) query.append('level', exportLevel);
 
-            const response = await fetch(`${API_BASE_URL}/timetables/${timetableId}/export?${query.toString()}`);
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Export failed');
-            }
-
-            const blob = await response.blob();
-            const url = window.URL.createObjectURL(blob);
-            const link = document.createElement('a');
+            // Use a direct anchor-tag navigation instead of fetch() to avoid
+            // IDM (Internet Download Manager) and other download-manager extensions
+            // intercepting the fetch call, which strips CORS headers and causes
+            // ERR_FAILED responses even when the server is configured correctly.
+            const exportUrl = `${API_BASE_URL}/timetables/${timetableId}/export?${query.toString()}`;
             const ext = exportFormat === 'word' ? 'docx' : exportFormat === 'pdf' ? 'pdf' : 'xlsx';
-            link.href = url;
-            link.download = `${timetable.name || 'timetable'}_${exportDepartment || 'all'}_${exportLevel || 'all'}.${ext}`;
+            const link = document.createElement('a');
+            link.href = exportUrl;
+            link.setAttribute('download', `${timetable.name || 'timetable'}_${exportDepartment || 'all'}_${exportLevel || 'all'}.${ext}`);
+            link.setAttribute('target', '_blank');
+            link.setAttribute('rel', 'noopener noreferrer');
             document.body.appendChild(link);
             link.click();
-            link.remove();
-            window.URL.revokeObjectURL(url);
-            setActionNotice({ message: 'Export completed successfully.', type: 'success' });
+            document.body.removeChild(link);
+            setActionNotice({ message: 'Export started — your download should begin shortly.', type: 'success' });
         } catch (error) {
             setActionNotice({ message: error.message || 'Export failed', type: 'error' });
         }
@@ -489,6 +514,27 @@ const TimetableView = () => {
                                 </svg>
                                 Assign Courses
                             </span>
+                        </button>
+                        <button
+                            onClick={handleGenerate}
+                            disabled={poolLoading || assignedCourseIds.size === 0}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 shadow-sm ${
+                                poolLoading || assignedCourseIds.size === 0
+                                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                    : 'bg-emerald-600 text-white hover:bg-emerald-700 hover:shadow-md'
+                            }`}
+                        >
+                            {poolLoading ? (
+                                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                                </svg>
+                            ) : (
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/>
+                                </svg>
+                            )}
+                            Generate Timetable
                         </button>
                     </div>
                 </div>
@@ -633,7 +679,7 @@ const TimetableView = () => {
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        <div className="text-xs text-slate-600 line-clamp-1">{course.title}</div>
+                                                        <div className="text-xs text-slate-600 break-words">{course.title}</div>
                                                         <div className="text-xs text-slate-400 mt-1 flex items-center gap-2">
                                                             <span>{course.duration / 60}h</span>
                                                         </div>
@@ -659,107 +705,147 @@ const TimetableView = () => {
                                             <table className="w-full border-collapse">
                                                 <thead>
                                                     <tr>
-                                                        <th className="border-r border-b border-slate-200 p-3 bg-slate-50 text-xs font-semibold text-slate-600 w-20 text-center sticky left-0 z-10">Time</th>
-                                                        {DAYS.map(day => (
-                                                            <th key={day} className="border-r border-b border-slate-200 p-3 bg-slate-50 text-sm font-semibold text-slate-700 min-w-[140px]">
-                                                                {day}
+                                                        <th className="border-r border-b border-slate-200 p-3 bg-slate-50 text-xs font-semibold text-slate-600 w-24 text-center sticky left-0 z-10">Day</th>
+                                                        {TIMES.map(time => (
+                                                            <th key={time} className="border-r border-b border-slate-200 p-3 bg-slate-50 text-xs font-semibold text-slate-700 min-w-[120px] text-center">
+                                                                {time}
                                                             </th>
                                                         ))}
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {TIMES.map(time => (
-                                                        <tr key={time}>
-                                                            <td className="border-r border-b border-slate-200 p-2 font-semibold text-xs text-slate-600 text-center bg-slate-50 sticky left-0 z-10">
-                                                                {time}
-                                                            </td>
-                                                            {DAYS.map(day => {
+                                                    {(() => {
+                                                        // Pre-compute which (day, timeIndex) cells are consumed
+                                                        // by a multi-hour course starting in an earlier column.
+                                                        const spannedCells = new Set(); // keys: "day::timeIndex"
+                                                        DAYS.forEach(day => {
+                                                            TIMES.forEach((time, tIdx) => {
                                                                 const slotCourses = scheduled.filter(c => c.day === day && to12Hour(c.time) === time);
-                                                                const hasConflict = slotCourses.some(c => c.clash_warning);
-                                                                return (
-                                                                    <td
-                                                                        key={`${day}-${time}`}
-                                                                        className={`border-r border-b border-slate-200 p-2 h-28 align-top relative transition-colors ${
-                                                                            hasConflict ? 'bg-red-50/50' : 'hover:bg-slate-50'
-                                                                        }`}
-                                                                        onDragOver={handleDragOver}
-                                                                        onDrop={(e) => handleDrop(e, day, to24Hour(time))}
-                                                                    >
-                                                                        {slotCourses.map((course, idx) => {
-                                                                            const styles = courseTypeStyles[course.type] || courseTypeStyles.Lecture;
-                                                                            const hasClash = course.clash_warning;
-                                                                            return (
-                                                                                <div
-                                                                                    key={`${course.code}-${idx}`}
-                                                                                    draggable
-                                                                                    onDragStart={(e) => handleDragStart(e, course, 'scheduled')}
-                                                                                    className={`p-2.5 rounded-lg text-xs mb-2 border-l-4 cursor-move relative group shadow-sm transition-all ${
-                                                                                        hasClash 
-                                                                                            ? 'bg-red-50 border-red-400 hover:bg-red-100' 
-                                                                                            : `${styles.bg} ${styles.border} ${styles.hover}`
-                                                                                    }`}
-                                                                                    title={`${course.title}\nLecturer: ${course.lecturers}\nVenue: ${course.venue}`}
-                                                                                >
-                                                                                    {/* Clash Warning Badge */}
-                                                                                    {hasClash && (
-                                                                                        <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm animate-pulse">
-                                                                                            !
-                                                                                        </div>
-                                                                                    )}
-                                                                                    
-                                                                                    <div className="flex items-center justify-between gap-1 mb-1">
-                                                                                        <span className={`font-bold ${hasClash ? 'text-red-900' : styles.text}`}>
-                                                                                            {course.code}
-                                                                                        </span>
-                                                                                        <div className="flex items-center gap-1">
-                                                                                            {course.is_compulsory && (
-                                                                                                <span className="px-1 py-0.5 bg-blue-100 text-blue-700 text-[9px] font-bold rounded">
-                                                                                                    COMP
-                                                                                                </span>
-                                                                                            )}
-                                                                                        </div>
-                                                                                    </div>
-                                                                                    
-                                                                                    <div className={`text-[10px] line-clamp-1 ${hasClash ? 'text-red-700' : 'text-slate-600'}`}>
-                                                                                        {course.title}
-                                                                                    </div>
-                                                                                    
-                                                                                    <div className={`text-[10px] mt-1.5 flex items-center gap-1 ${hasClash ? 'text-red-600' : 'text-slate-500'}`}>
-                                                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                                                        </svg>
-                                                                                        {course.venue || 'Unassigned'}
-                                                                                    </div>
+                                                                slotCourses.forEach(course => {
+                                                                    const colSpan = Math.max(1, Math.round((course.duration || 60) / 60));
+                                                                    for (let c = 1; c < colSpan; c++) {
+                                                                        if (tIdx + c < TIMES.length) {
+                                                                            spannedCells.add(`${day}::${tIdx + c}`);
+                                                                        }
+                                                                    }
+                                                                });
+                                                            });
+                                                        });
 
-                                                                                    {/* Remove Button */}
-                                                                                    <button
-                                                                                        onClick={(e) => {
-                                                                                            e.stopPropagation();
-                                                                                            const newScheduled = scheduled.filter(c => c !== course);
-                                                                                            const newUnscheduled = [...unscheduled, course];
-                                                                                            setScheduled(newScheduled);
-                                                                                            setUnscheduled(newUnscheduled);
-                                                                                            suppressNextNotificationRef.current = true;
-                                                                                            fetch(`${API_BASE_URL}/timetables/${timetableId}/save`, {
-                                                                                                method: 'POST',
-                                                                                                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-                                                                                                body: JSON.stringify({ scheduled: newScheduled, unscheduled: newUnscheduled })
-                                                                                            });
-                                                                                        }}
-                                                                                        className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-600"
-                                                                                        title="Remove from slot"
-                                                                                    >
-                                                                                        ×
-                                                                                    </button>
+                                                        return DAYS.map(day => (
+                                                            <tr key={day}>
+                                                                <td className="border-r border-b border-slate-200 p-2 font-semibold text-xs text-slate-700 text-center bg-slate-50 sticky left-0 z-10 whitespace-nowrap">
+                                                                    {day}
+                                                                </td>
+                                                                {TIMES.map((time, tIdx) => {
+                                                                    // Skip cells consumed by a colSpan from the left
+                                                                    if (spannedCells.has(`${day}::${tIdx}`)) return null;
+
+                                                                    const slotCourses = scheduled.filter(c => c.day === day && to12Hour(c.time) === time);
+                                                                    const hasConflict = slotCourses.some(c => c.clash_warning);
+
+                                                                    // colSpan = widest course duration in this slot
+                                                                    const maxColSpan = slotCourses.reduce((max, c) => {
+                                                                        const span = Math.max(1, Math.round((c.duration || 60) / 60));
+                                                                        return Math.max(max, span);
+                                                                    }, 1);
+
+                                                                    return (
+                                                                        <td
+                                                                            key={`${day}-${time}`}
+                                                                            colSpan={maxColSpan > 1 ? maxColSpan : undefined}
+                                                                            className={`border-r border-b border-slate-200 p-1.5 align-top relative transition-colors h-24 ${
+                                                                                hasConflict ? 'bg-red-50/50' : 'hover:bg-slate-50'
+                                                                            }`}
+                                                                            onDragOver={handleDragOver}
+                                                                            onDrop={(e) => handleDrop(e, day, to24Hour(time))}
+                                                                        >
+                                                                            {slotCourses.length === 0 ? null : (
+                                                                                <div className="flex flex-row gap-0 h-full">
+                                                                                    {slotCourses.map((course, idx) => {
+                                                                                        const styles = courseTypeStyles[course.type] || courseTypeStyles.Lecture;
+                                                                                        const hasClash = course.clash_warning;
+                                                                                        return (
+                                                                                            <React.Fragment key={`${course.code}-${idx}`}>
+                                                                                                {/* Vertical dashed divider between concurrent courses */}
+                                                                                                {idx > 0 && (
+                                                                                                    <div className="border-l-2 border-dashed border-slate-300 mx-1 opacity-70 self-stretch" />
+                                                                                                )}
+                                                                                                <div
+                                                                                                    draggable
+                                                                                                    onDragStart={(e) => handleDragStart(e, course, 'scheduled')}
+                                                                                                    className={`p-2 rounded-lg text-xs border-t-4 cursor-move relative group shadow-sm transition-all flex-1 ${
+                                                                                                        hasClash
+                                                                                                            ? 'bg-red-50 border-red-400 hover:bg-red-100'
+                                                                                                            : `${styles.bg} ${styles.border} ${styles.hover}`
+                                                                                                    }`}
+                                                                                                    title={`${course.title}\nLecturer: ${course.lecturers}\nVenue: ${course.venue}`}
+                                                                                                >
+                                                                                                    {/* Clash Warning Badge */}
+                                                                                                    {hasClash && (
+                                                                                                        <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm animate-pulse">
+                                                                                                            !
+                                                                                                        </div>
+                                                                                                    )}
+
+                                                                                                    {/* Duration badge */}
+                                                                                                    {course.duration > 60 && (
+                                                                                                        <div className={`absolute bottom-1 right-1 px-1 py-0.5 text-[9px] font-bold rounded ${hasClash ? 'bg-red-100 text-red-700' : 'bg-slate-200 text-slate-600'}`}>
+                                                                                                            {course.duration / 60}h
+                                                                                                        </div>
+                                                                                                    )}
+
+                                                                                                    <div className="flex items-start justify-between gap-1 mb-1">
+                                                                                                        <span className={`font-bold leading-tight ${hasClash ? 'text-red-900' : styles.text}`}>
+                                                                                                            {course.code}
+                                                                                                        </span>
+                                                                                                        {course.is_compulsory && (
+                                                                                                            <span className="px-1 py-0.5 bg-blue-100 text-blue-700 text-[9px] font-bold rounded flex-shrink-0">
+                                                                                                                COMP
+                                                                                                            </span>
+                                                                                                        )}
+                                                                                                    </div>
+
+                                                                                                    <div className={`text-[10px] mt-1 flex items-center gap-1 ${hasClash ? 'text-red-600' : 'text-slate-500'}`}>
+                                                                                                        <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                                                                        </svg>
+                                                                                                        <span className="truncate">{course.venue || 'Unassigned'}</span>
+                                                                                                    </div>
+
+                                                                                                    {/* Remove Button */}
+                                                                                                    <button
+                                                                                                        onClick={(e) => {
+                                                                                                            e.stopPropagation();
+                                                                                                            const newScheduled = scheduled.filter(c => c !== course);
+                                                                                                            const newUnscheduled = [...unscheduled, course];
+                                                                                                            setScheduled(newScheduled);
+                                                                                                            setUnscheduled(newUnscheduled);
+                                                                                                            suppressNextNotificationRef.current = true;
+                                                                                                            fetch(`${API_BASE_URL}/timetables/${timetableId}/save`, {
+                                                                                                                method: 'POST',
+                                                                                                                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                                                                                                                body: JSON.stringify({ scheduled: newScheduled, unscheduled: newUnscheduled })
+                                                                                                            });
+                                                                                                        }}
+                                                                                                        className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-600"
+                                                                                                        title="Remove from slot"
+                                                                                                    >
+                                                                                                        ×
+                                                                                                    </button>
+                                                                                                </div>
+                                                                                            </React.Fragment>
+                                                                                        );
+                                                                                    })}
                                                                                 </div>
-                                                                            );
-                                                                        })}
-                                                                    </td>
-                                                                );
-                                                            })}
-                                                        </tr>
-                                                    ))}
+                                                                            )}
+                                                                        </td>
+                                                                    );
+                                                                })}
+                                                            </tr>
+                                                        ));
+                                                    })()}
                                                 </tbody>
                                             </table>
                                         </div>
@@ -796,39 +882,11 @@ const CourseAssignmentPanel = ({ timetableId, masterCourses, assignedCourseIds, 
         <div className="space-y-6">
             {/* Header */}
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                    <div>
-                        <h2 className="text-lg font-semibold text-slate-800">Assign Courses from Pool</h2>
-                        <p className="text-slate-500 text-sm mt-1">
-                            Add courses from the master pool to this timetable, then generate the schedule.
-                        </p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <span className="text-sm text-slate-500">
-                            <strong className="text-[#4c1d95]">{assignedCourseIds.size}</strong> courses assigned
-                        </span>
-                        <button
-                            onClick={onGenerate}
-                            disabled={assignedCourseIds.size === 0 || loading}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
-                                assignedCourseIds.size === 0 || loading
-                                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                                    : 'bg-[#4c1d95] text-white hover:bg-[#3c1780] shadow-md'
-                            }`}
-                        >
-                            {loading ? (
-                                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
-                                </svg>
-                            ) : (
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/>
-                                </svg>
-                            )}
-                            Generate Timetable
-                        </button>
-                    </div>
+                <div>
+                    <h2 className="text-lg font-semibold text-slate-800">Assign Courses from Pool</h2>
+                    <p className="text-slate-500 text-sm mt-1">
+                        Add courses from the master pool to this timetable, then generate the schedule.
+                    </p>
                 </div>
             </div>
 
@@ -886,10 +944,14 @@ const CourseAssignmentPanel = ({ timetableId, masterCourses, assignedCourseIds, 
                         ) : (
                             availableCourses.map(course => (
                                 <div key={course.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-emerald-300 transition-colors">
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-bold rounded">{course.code}</span>
-                                            <span className="text-sm font-medium text-slate-800 truncate">{course.title}</span>
+                                    <div className="min-w-0 flex-1 pr-3">
+                                        <div className="flex flex-col items-start gap-1 mb-1.5">
+                                            <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-[11px] font-bold rounded">
+                                                {course.code}
+                                            </span>
+                                            <span className="text-sm font-medium text-slate-800 whitespace-normal break-words leading-snug">
+                                                {course.title}
+                                            </span>
                                         </div>
                                         <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
                                             <span className="px-1.5 py-0.5 bg-slate-200 rounded">{course.department}</span>
@@ -913,7 +975,7 @@ const CourseAssignmentPanel = ({ timetableId, masterCourses, assignedCourseIds, 
                 </div>
 
                 {/* Assigned Courses */}
-                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
                     <div className="p-4 bg-emerald-50 border-b border-emerald-200">
                         <h3 className="font-semibold text-emerald-800 flex items-center gap-2">
                             <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
@@ -921,7 +983,7 @@ const CourseAssignmentPanel = ({ timetableId, masterCourses, assignedCourseIds, 
                             <span className="text-sm font-normal text-emerald-600">({assignedCourses.length})</span>
                         </h3>
                     </div>
-                    <div className="p-4 max-h-[500px] overflow-y-auto space-y-2">
+                    <div className="p-4 max-h-[500px] overflow-y-auto space-y-2 flex-1">
                         {assignedCourses.length === 0 ? (
                             <div className="text-center py-8 text-slate-400">
                                 <svg className="w-12 h-12 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -933,10 +995,14 @@ const CourseAssignmentPanel = ({ timetableId, masterCourses, assignedCourseIds, 
                         ) : (
                             assignedCourses.map(course => (
                                 <div key={course.id} className="flex items-center justify-between p-3 bg-emerald-50 rounded-lg border border-emerald-200">
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs font-bold rounded">{course.code}</span>
-                                            <span className="text-sm font-medium text-slate-800 truncate">{course.title}</span>
+                                    <div className="min-w-0 flex-1 pr-3">
+                                        <div className="flex flex-col items-start gap-1 mb-1.5">
+                                            <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[11px] font-bold rounded">
+                                                {course.code}
+                                            </span>
+                                            <span className="text-sm font-medium text-slate-800 whitespace-normal break-words leading-snug">
+                                                {course.title}
+                                            </span>
                                         </div>
                                         <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
                                             <span className="px-1.5 py-0.5 bg-emerald-200 rounded">{course.department}</span>

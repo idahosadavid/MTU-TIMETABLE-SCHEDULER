@@ -28,7 +28,23 @@ app.use((req, res, next) => {
 });
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: (origin, callback) => {
+        // Allow requests with no origin (e.g. curl, mobile apps) and all localhost origins
+        if (!origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+            return callback(null, true);
+        }
+        // Allow any origin in development; tighten this in production via env
+        const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        // Default: allow all (permissive dev setup)
+        callback(null, true);
+    },
+    credentials: true,
+    exposedHeaders: ['Content-Disposition']
+}));
 app.use(bodyParser.json());
 
 process.on('exit', (code) => {
@@ -67,6 +83,9 @@ const to12HourForExport = (t) => {
     return `${h - 12}:${m} PM`;
 };
 
+const EXPORT_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+const EXPORT_TIMES = ['9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM', '6:00 PM', '7:00 PM'];
+
 const flattenForExport = (courses) => courses.map(course => ({
     code: course.code,
     title: course.title,
@@ -81,6 +100,210 @@ const flattenForExport = (courses) => courses.map(course => ({
     duration_minutes: course.duration,
     lecturers: Array.isArray(course.lecturers) ? course.lecturers.join(', ') : course.lecturers
 }));
+
+// Build Excel grid workbook (rows=days, cols=time slots)
+const buildExcelGrid = async (rows, sheetTitle) => {
+    const ExcelJS = require('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet(sheetTitle || 'Timetable');
+
+    // Header row
+    const headerRow = ws.addRow(['Day / Time', ...EXPORT_TIMES]);
+    headerRow.eachCell(cell => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4C1D95' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.border = {
+            top: { style: 'thin' }, left: { style: 'thin' },
+            bottom: { style: 'thin' }, right: { style: 'thin' }
+        };
+    });
+    ws.getColumn(1).width = 14;
+    EXPORT_TIMES.forEach((_, i) => { ws.getColumn(i + 2).width = 22; });
+    ws.getRow(1).height = 28;
+
+    // Data rows
+    EXPORT_DAYS.forEach((day, dIdx) => {
+        const excelRowIndex = dIdx + 2;
+        const dataRow = ws.addRow([day, ...EXPORT_TIMES.map(() => '')]);
+        dataRow.height = 60;
+        const dayCell = dataRow.getCell(1);
+        dayCell.font = { bold: true };
+        dayCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        dayCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: dIdx % 2 === 0 ? 'FFF5F3FF' : 'FFFAF5FF' } };
+        dayCell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+
+        const consumed = new Set();
+        EXPORT_TIMES.forEach((time, tIdx) => {
+            const colNumber = tIdx + 2;
+            const cell = dataRow.getCell(colNumber);
+            cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+            if (consumed.has(tIdx)) return;
+            const courses = rows.filter(r => r.day === day && r.time === time);
+            cell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true };
+            if (courses.length === 0) return;
+            const colSpan = Math.max(1, Math.round((courses[0].duration_minutes || 60) / 60));
+            cell.value = courses.map(c => `${c.code}\n${c.venue || 'Unassigned'}`).join('\n· · · · ·\n');
+            for (let c = 1; c < colSpan && tIdx + c < EXPORT_TIMES.length; c++) consumed.add(tIdx + c);
+            if (colSpan > 1) {
+                const endCol = Math.min(colNumber + colSpan - 1, EXPORT_TIMES.length + 1);
+                ws.mergeCells(excelRowIndex, colNumber, excelRowIndex, endCol);
+            }
+        });
+    });
+
+    return workbook.xlsx.writeBuffer();
+};
+
+// Build PDF grid (rows=days, cols=time slots)
+const buildPdfGrid = (rows, title, subtitle1, subtitle2, onEnd, onError) => {
+    const PDFDocument = require('pdfkit');
+    const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
+    const chunks = [];
+    doc.on('data', c => chunks.push(c));
+    doc.on('error', onError);
+    doc.on('end', () => onEnd(Buffer.concat(chunks)));
+
+    // Title
+    doc.fontSize(14).font('Helvetica-Bold').text(title, { underline: true });
+    doc.fontSize(9).font('Helvetica').text(subtitle1);
+    if (subtitle2) doc.text(subtitle2);
+    doc.moveDown(0.5);
+
+    const pageWidth = doc.page.width - 60; // margins
+    const colCount = EXPORT_TIMES.length + 1; // day col + time cols
+    const dayColW = 62;
+    const timeColW = (pageWidth - dayColW) / EXPORT_TIMES.length;
+    const rowH = 56;
+    const headerH = 24;
+    const startX = 30;
+    let startY = doc.y;
+
+    // Draw header
+    doc.rect(startX, startY, dayColW, headerH).fillAndStroke('#4C1D95', '#4C1D95');
+    doc.fillColor('white').fontSize(7).font('Helvetica-Bold')
+        .text('Day / Time', startX + 2, startY + 7, { width: dayColW - 4, align: 'center' });
+    EXPORT_TIMES.forEach((t, i) => {
+        const x = startX + dayColW + i * timeColW;
+        doc.rect(x, startY, timeColW, headerH).fillAndStroke('#4C1D95', '#4C1D95');
+        doc.fillColor('white').fontSize(6.5).font('Helvetica-Bold')
+            .text(t, x + 2, startY + 8, { width: timeColW - 4, align: 'center' });
+    });
+    startY += headerH;
+
+    // Draw data rows
+    EXPORT_DAYS.forEach((day, dIdx) => {
+        const rowBg = dIdx % 2 === 0 ? '#F5F3FF' : '#FAF5FF';
+        doc.rect(startX, startY, dayColW, rowH).fillAndStroke(rowBg, '#CCCCCC');
+        doc.fillColor('#1E1B4B').fontSize(7).font('Helvetica-Bold')
+            .text(day, startX + 2, startY + rowH / 2 - 6, { width: dayColW - 4, align: 'center' });
+
+        const consumed = new Set();
+        EXPORT_TIMES.forEach((time, i) => {
+            if (consumed.has(i)) return;
+            const x = startX + dayColW + i * timeColW;
+            const courses = rows.filter(r => r.day === day && r.time === time);
+            const colSpan = courses.length > 0
+                ? Math.max(1, Math.round((courses[0].duration_minutes || 60) / 60))
+                : 1;
+            const cellW = timeColW * Math.min(colSpan, EXPORT_TIMES.length - i);
+            doc.rect(x, startY, cellW, rowH).fillAndStroke('#FFFFFF', '#CCCCCC');
+            if (courses.length > 0) {
+                for (let c = 1; c < colSpan && i + c < EXPORT_TIMES.length; c++) consumed.add(i + c);
+                let ty = startY + 3;
+                courses.forEach((c, ci) => {
+                    if (ci > 0) {
+                        // Draw dashed separator between concurrent courses
+                        doc.save();
+                        doc.lineWidth(0.5).dash(2, { space: 2 })
+                            .moveTo(x + 3, ty).lineTo(x + cellW - 3, ty)
+                            .strokeColor('#CCCCCC').stroke();
+                        doc.restore();
+                        ty += 4;
+                    }
+                    doc.fillColor('#1E1B4B').fontSize(6.5).font('Helvetica-Bold')
+                        .text(c.code, x + 3, ty, { width: cellW - 6, lineBreak: false });
+                    ty += 9;
+                    doc.fillColor('#6B7280').fontSize(5.5).font('Helvetica')
+                        .text(c.venue || 'Unassigned', x + 3, ty, { width: cellW - 6, lineBreak: false });
+                    ty += 8;
+                });
+            }
+        });
+        startY += rowH;
+    });
+
+    doc.end();
+};
+
+// Build Word grid (rows=days, cols=time slots)
+const buildWordGrid = async (rows, title, subtitle1, subtitle2) => {
+    const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, ShadingType, AlignmentType, BorderStyle } = require('docx');
+    const border = { style: BorderStyle.SINGLE, size: 4, color: 'CCCCCC' };
+    const cellBorders = { top: border, bottom: border, left: border, right: border };
+    const headerShading = { type: ShadingType.SOLID, color: '4C1D95' };
+    const colWidths = [1200, ...EXPORT_TIMES.map(() => Math.floor(7000 / EXPORT_TIMES.length))];
+
+    const headerCells = [
+        new TableCell({ width: { size: colWidths[0], type: WidthType.DXA }, shading: headerShading, borders: cellBorders,
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: 'Day / Time', bold: true, color: 'FFFFFF', size: 16 })] })] })
+    ];
+    EXPORT_TIMES.forEach((t, i) => {
+        headerCells.push(new TableCell({
+            width: { size: colWidths[i + 1], type: WidthType.DXA }, shading: headerShading, borders: cellBorders,
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: t, bold: true, color: 'FFFFFF', size: 14 })] })]
+        }));
+    });
+
+    const timeColW = Math.floor(7000 / EXPORT_TIMES.length);
+
+    const dataRows = EXPORT_DAYS.map((day, dIdx) => {
+        const cells = [new TableCell({
+            width: { size: colWidths[0], type: WidthType.DXA },
+            shading: { type: ShadingType.SOLID, color: dIdx % 2 === 0 ? 'EDE9FE' : 'F5F3FF' },
+            borders: cellBorders,
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: day, bold: true, size: 16, color: '1E1B4B' })] })]
+        })];
+        const consumed = new Set();
+        EXPORT_TIMES.forEach((time, i) => {
+            if (consumed.has(i)) return;
+            const courses = rows.filter(r => r.day === day && r.time === time);
+            const colSpan = courses.length > 0
+                ? Math.max(1, Math.round((courses[0].duration_minutes || 60) / 60))
+                : 1;
+            const clampedSpan = Math.min(colSpan, EXPORT_TIMES.length - i);
+            for (let c = 1; c < clampedSpan; c++) consumed.add(i + c);
+            cells.push(new TableCell({
+                width: { size: timeColW * clampedSpan, type: WidthType.DXA },
+                borders: cellBorders,
+                columnSpan: clampedSpan > 1 ? clampedSpan : undefined,
+                children: courses.length === 0
+                    ? [new Paragraph('')]
+                    : courses.flatMap((c, ci) => [
+                        ...(ci > 0 ? [new Paragraph({
+                            border: { top: { style: BorderStyle.DASHED, size: 4, color: 'CCCCCC' } },
+                            children: [new TextRun({ text: '' })]
+                        })] : []),
+                        new Paragraph({ children: [new TextRun({ text: c.code, bold: true, color: '4C1D95', size: 16 })] }),
+                        new Paragraph({ children: [new TextRun({ text: c.venue || 'Unassigned', size: 12, color: '6B7280' })] }),
+                    ])
+            }));
+        });
+        return new TableRow({ children: cells });
+    });
+
+    const table = new Table({ rows: [new TableRow({ children: headerCells }), ...dataRows], width: { size: 100, type: WidthType.PERCENTAGE } });
+    const doc = new Document({
+        sections: [{ properties: {}, children: [
+            new Paragraph({ children: [new TextRun({ text: title, bold: true, size: 28 })] }),
+            new Paragraph({ children: [new TextRun({ text: subtitle1, size: 18 })] }),
+            ...(subtitle2 ? [new Paragraph({ children: [new TextRun({ text: subtitle2, size: 18 })] })] : []),
+            new Paragraph(''),
+            table
+        ]}]
+    });
+    return Packer.toBuffer(doc);
+};
 
 const parseVenueSeats = (payload = {}) => {
     const parsed = Number(payload.seats ?? payload.capacity ?? 0);
@@ -392,60 +615,40 @@ app.get('/api/student/:matric_number/timetable/export', async (req, res) => {
         const baseName = `Timetable_${safeMatric}`;
 
         if (format === 'excel') {
-            const ExcelJS = require('exceljs');
-            const workbook = new ExcelJS.Workbook();
-            const worksheet = workbook.addWorksheet('Timetable');
-            if (rows.length > 0) {
-                worksheet.columns = Object.keys(rows[0]).map(key => ({ header: key, key }));
-            }
-            worksheet.addRows(rows);
-            const buffer = await workbook.xlsx.writeBuffer();
+            const buffer = await buildExcelGrid(rows, `Timetable: ${matric_number}`);
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             res.setHeader('Content-Disposition', `attachment; filename=${baseName}.xlsx`);
             return res.send(buffer);
         }
 
         if (format === 'pdf') {
-            const PDFDocument = require('pdfkit');
-            const doc = new PDFDocument({ margin: 30, size: 'A4' });
-            const chunks = [];
-            doc.on('data', chunk => chunks.push(chunk));
-            doc.on('end', () => {
-                const pdfBuffer = Buffer.concat(chunks);
-                res.setHeader('Content-Type', 'application/pdf');
-                res.setHeader('Content-Disposition', `attachment; filename=${baseName}.pdf`);
-                res.send(pdfBuffer);
-            });
-
-            doc.fontSize(16).text(`Personal Timetable: ${matric_number}`, { underline: true });
-            doc.moveDown(0.5);
-            doc.fontSize(10).text(`Name: ${payload.student.name || 'Student'}`);
-            doc.text(`Department: ${payload.student.department || 'N/A'} | Level: ${payload.student.level || 'N/A'}`);
-            doc.moveDown(1);
-
-            rows.forEach((row, index) => {
-                doc.fontSize(9).text(`${index + 1}. ${row.code} - ${row.title} | ${row.day} ${row.time} | ${row.venue}`);
-            });
-            doc.end();
+            buildPdfGrid(
+                rows,
+                `Personal Timetable: ${matric_number}`,
+                `Name: ${payload.student.name || 'Student'}`,
+                `Department: ${payload.student.department || 'N/A'} | Level: ${payload.student.level || 'N/A'}`,
+                (pdfBuffer) => {
+                    if (!res.headersSent) {
+                        res.setHeader('Content-Type', 'application/pdf');
+                        res.setHeader('Content-Disposition', `attachment; filename=${baseName}.pdf`);
+                        res.send(pdfBuffer);
+                    }
+                },
+                (pdfErr) => {
+                    console.error('[Student PDF Export] PDFKit error:', pdfErr);
+                    if (!res.headersSent) res.status(500).json({ error: 'PDF generation failed: ' + pdfErr.message });
+                }
+            );
             return;
         }
 
         if (format === 'word') {
-            const { Document, Packer, Paragraph, TextRun } = require('docx');
-            const paragraphs = [
-                new Paragraph({
-                    children: [new TextRun({ text: `Personal Timetable: ${matric_number}`, bold: true, size: 28 })]
-                }),
-                new Paragraph(`Name: ${payload.student.name || 'Student'}`),
-                new Paragraph(`Department: ${payload.student.department || 'N/A'} | Level: ${payload.student.level || 'N/A'}`),
-                new Paragraph(' '),
-                ...rows.map((row, index) => new Paragraph(`${index + 1}. ${row.code} - ${row.title} | ${row.day} ${row.time} | ${row.venue}`))
-            ];
-
-            const doc = new Document({
-                sections: [{ properties: {}, children: paragraphs }]
-            });
-            const buffer = await Packer.toBuffer(doc);
+            const buffer = await buildWordGrid(
+                rows,
+                `Personal Timetable: ${matric_number}`,
+                `Name: ${payload.student.name || 'Student'}`,
+                `Department: ${payload.student.department || 'N/A'} | Level: ${payload.student.level || 'N/A'}`
+            );
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
             res.setHeader('Content-Disposition', `attachment; filename=${baseName}.docx`);
             return res.send(buffer);
@@ -767,6 +970,53 @@ app.post('/api/courses', requireAdmin, (req, res) => {
             }
             return res.status(400).json({ error: err.message });
         });
+});
+// Bulk Add courses
+app.post('/api/courses/bulk', requireAdmin, async (req, res) => {
+    const { courses } = req.body;
+    if (!Array.isArray(courses)) {
+        return res.status(400).json({ error: 'Expected an array of courses' });
+    }
+
+    let addedCount = 0;
+    let errors = [];
+
+    for (let i = 0; i < courses.length; i++) {
+        const c = courses[i];
+        try {
+            const durationInMinutes = parseFloat(c.duration || 1) * 60;
+            let college = null;
+            if (c.timetable_id) {
+                const timetableRow = await timetablesRepo.getRawById(c.timetable_id);
+                if (!timetableRow) throw new Error('Invalid timetable_id');
+                college = timetableRow.college || null;
+            }
+
+            await coursesRepo.create({
+                code: c.code,
+                title: c.title,
+                college,
+                department: c.department,
+                level: c.level,
+                lecturers: Array.isArray(c.lecturers) ? c.lecturers : (c.lecturers ? String(c.lecturers).split(',').map(l => l.trim()) : []),
+                units: c.units,
+                semester: c.semester || 'First',
+                type: c.type || 'Lecture',
+                is_compulsory: c.is_compulsory === 'true' || c.is_compulsory === true,
+                preferred_day: c.preferred_day || 'AUTO',
+                preferred_time: c.preferred_time || 'AUTO',
+                venue: c.venue || '',
+                duration: durationInMinutes,
+                custom_data: c.custom_data || {},
+                timetable_id: c.timetable_id || null
+            });
+            addedCount++;
+        } catch (err) {
+            errors.push(`Row ${i + 1} (${c.code}): ${err.message}`);
+        }
+    }
+
+    res.json({ message: `Successfully added ${addedCount} courses.`, addedCount, errors });
 });
 
 // Get all courses
@@ -1315,60 +1565,40 @@ app.get('/api/timetables/:id/export', async (req, res) => {
         const baseName = `${timetable.name || 'timetable'}_${department || 'all'}_${level || 'all'}`.replace(/\s+/g, '_');
 
         if (format === 'excel') {
-            const ExcelJS = require('exceljs');
-            const workbook = new ExcelJS.Workbook();
-            const worksheet = workbook.addWorksheet('Timetable');
-            if (rows.length > 0) {
-                worksheet.columns = Object.keys(rows[0]).map(key => ({ header: key, key }));
-            }
-            worksheet.addRows(rows);
-            const buffer = await workbook.xlsx.writeBuffer();
+            const buffer = await buildExcelGrid(rows, timetable.name || 'Timetable');
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             res.setHeader('Content-Disposition', `attachment; filename=${baseName}.xlsx`);
             return res.send(buffer);
         }
 
         if (format === 'pdf') {
-            const PDFDocument = require('pdfkit');
-            const doc = new PDFDocument({ margin: 30, size: 'A4' });
-            const chunks = [];
-            doc.on('data', chunk => chunks.push(chunk));
-            doc.on('end', () => {
-                const pdfBuffer = Buffer.concat(chunks);
-                res.setHeader('Content-Type', 'application/pdf');
-                res.setHeader('Content-Disposition', `attachment; filename=${baseName}.pdf`);
-                res.send(pdfBuffer);
-            });
-
-            doc.fontSize(16).text(`${timetable.name || 'Timetable'} Export`, { underline: true });
-            doc.moveDown(0.5);
-            doc.fontSize(10).text(`College: ${timetable.college || 'N/A'} | Semester: ${timetable.semester || 'N/A'}`);
-            doc.text(`Department: ${department || 'All'} | Level: ${level || 'All'}`);
-            doc.moveDown(1);
-
-            rows.forEach((row, index) => {
-                doc.fontSize(9).text(`${index + 1}. ${row.code} - ${row.title} | ${row.day} ${row.time} | ${row.venue}`);
-            });
-            doc.end();
+            buildPdfGrid(
+                rows,
+                `${timetable.name || 'Timetable'}`,
+                `College: ${timetable.college || 'N/A'} | Semester: ${timetable.semester || 'N/A'}`,
+                `Department: ${department || 'All'} | Level: ${level || 'All'}`,
+                (pdfBuffer) => {
+                    if (!res.headersSent) {
+                        res.setHeader('Content-Type', 'application/pdf');
+                        res.setHeader('Content-Disposition', `attachment; filename=${baseName}.pdf`);
+                        res.send(pdfBuffer);
+                    }
+                },
+                (pdfErr) => {
+                    console.error('[PDF Export] PDFKit error:', pdfErr);
+                    if (!res.headersSent) res.status(500).json({ error: 'PDF generation failed: ' + pdfErr.message });
+                }
+            );
             return;
         }
 
         if (format === 'word') {
-            const { Document, Packer, Paragraph, TextRun } = require('docx');
-            const paragraphs = [
-                new Paragraph({
-                    children: [new TextRun({ text: `${timetable.name || 'Timetable'} Export`, bold: true, size: 28 })]
-                }),
-                new Paragraph(`College: ${timetable.college || 'N/A'} | Semester: ${timetable.semester || 'N/A'}`),
-                new Paragraph(`Department: ${department || 'All'} | Level: ${level || 'All'}`),
-                new Paragraph(' '),
-                ...rows.map((row, index) => new Paragraph(`${index + 1}. ${row.code} - ${row.title} | ${row.day} ${row.time} | ${row.venue}`))
-            ];
-
-            const doc = new Document({
-                sections: [{ properties: {}, children: paragraphs }]
-            });
-            const buffer = await Packer.toBuffer(doc);
+            const buffer = await buildWordGrid(
+                rows,
+                `${timetable.name || 'Timetable'}`,
+                `College: ${timetable.college || 'N/A'} | Semester: ${timetable.semester || 'N/A'}`,
+                `Department: ${department || 'All'} | Level: ${level || 'All'}`
+            );
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
             res.setHeader('Content-Disposition', `attachment; filename=${baseName}.docx`);
             return res.send(buffer);

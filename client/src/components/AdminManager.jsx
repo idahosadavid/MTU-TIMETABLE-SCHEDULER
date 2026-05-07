@@ -30,6 +30,7 @@ const AdminManager = () => {
     const [courseFilterDept, setCourseFilterDept] = useState('');
     const [courseFilterLevel, setCourseFilterLevel] = useState('');
     const [selectedTimetableForAssign, setSelectedTimetableForAssign] = useState('');
+    const [selectedMasterCourseIds, setSelectedMasterCourseIds] = useState(new Set());
 
     const fetchAll = async () => {
         const [cRes, dRes, lRes, vRes, rRes, coRes, tRes, mRes] = await Promise.all([
@@ -213,6 +214,120 @@ const AdminManager = () => {
         setEditingCourseId(null);
     };
 
+    const downloadSampleCSV = () => {
+        const headers = ['Course Code', 'Course Title', 'Department', 'Level', 'Lecturer', 'Units', 'Semester', 'Type', 'Compulsory', 'Preferred Day', 'Preferred Time', 'Venue', 'Duration (hours)'];
+        const sampleData1 = ['CSC 101', 'Introduction to Computer Science', 'CSC', '100', 'Dr. Smith', '3', 'First', 'Lecture', 'true', 'Monday', '10:00', 'Hall A', '2'];
+        const sampleData2 = ['MTS 101', 'Introductory Mathematics I', 'MTS', '100', 'Prof. John', '3', 'First', 'Lecture', 'false', 'AUTO', 'AUTO', '', '2'];
+        const csvContent = headers.join(',') + '\n' + 
+            sampleData1.map(v => `"${v}"`).join(',') + '\n' + 
+            sampleData2.map(v => `"${v}"`).join(',');
+        
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', 'sample_courses.csv');
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    // Proper RFC 4180-compliant CSV line parser
+    const parseCSVLine = (line) => {
+        const fields = [];
+        let field = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (inQuotes) {
+                if (ch === '"') {
+                    if (line[i + 1] === '"') { field += '"'; i++; } // escaped quote
+                    else { inQuotes = false; } // closing quote
+                } else { field += ch; }
+            } else {
+                if (ch === '"') { inQuotes = true; }
+                else if (ch === ',') { fields.push(field.trim()); field = ''; }
+                else { field += ch; }
+            }
+        }
+        fields.push(field.trim());
+        return fields;
+    };
+
+    // Bulk Upload Handler
+    const handleBulkUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            const csv = event.target.result;
+            // Simple split by newline, ignoring empty lines
+            const lines = csv.split(/\r?\n/).filter(line => line.trim() !== '');
+            if (lines.length < 2) {
+                setNotice({ message: 'CSV file is empty or missing headers.', type: 'error' });
+                return;
+            }
+
+            // Use proper RFC 4180-compliant parser for all rows
+            const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase());
+            const coursesToUpload = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                const cleanValues = parseCSVLine(lines[i]);
+
+                let course = {};
+                headers.forEach((header, index) => {
+                    const val = cleanValues[index] || '';
+                    if (header.includes('code')) course.code = val;
+                    else if (header.includes('title')) course.title = val;
+                    else if (header.includes('department')) course.department = val;
+                    else if (header.includes('level')) course.level = val;
+                    else if (header.includes('lecturer')) course.lecturers = val;
+                    else if (header.includes('unit')) course.units = val;
+                    else if (header.includes('semester')) course.semester = val;
+                    else if (header.includes('type')) course.type = val;
+                    else if (header.includes('compulsory')) course.is_compulsory = val;
+                    else if (header.includes('day')) course.preferred_day = val;
+                    else if (header.includes('time')) course.preferred_time = val;
+                    else if (header.includes('venue')) course.venue = val;
+                    else if (header.includes('duration')) course.duration = val;
+                });
+                if (course.code && course.title && course.department) {
+                    coursesToUpload.push(course);
+                }
+            }
+
+            if (coursesToUpload.length === 0) {
+                setNotice({ message: 'No valid courses found in CSV.', type: 'error' });
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/courses/bulk`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                    body: JSON.stringify({ courses: coursesToUpload })
+                });
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Bulk upload failed');
+                }
+
+                setNotice({ message: data.message, type: 'success' });
+                if (data.errors && data.errors.length > 0) {
+                    console.warn('Some rows failed to import:', data.errors);
+                }
+                fetchAll();
+            } catch (err) {
+                setNotice({ message: err.message, type: 'error' });
+            }
+        };
+        reader.readAsText(file);
+        e.target.value = ''; // Reset file input
+    };
+
     // Master Course (Course Pool) functions
     const submitMasterCourse = async () => {
         const courseData = { ...forms.course, timetable_id: null };
@@ -299,6 +414,55 @@ const AdminManager = () => {
             fetchAll();
         } catch (err) {
             setNotice({ message: err.message, type: 'error' });
+        }
+    };
+
+    const assignBulkCoursesToTimetable = async () => {
+        if (!selectedTimetableForAssign) {
+            setNotice({ message: 'Please select a timetable first', type: 'error' });
+            return;
+        }
+        if (selectedMasterCourseIds.size === 0) {
+            setNotice({ message: 'Please select at least one course', type: 'error' });
+            return;
+        }
+        
+        try {
+            const courseIdsArray = Array.from(selectedMasterCourseIds);
+            const response = await fetch(`${API_BASE_URL}/timetables/${selectedTimetableForAssign}/courses/bulk`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                body: JSON.stringify({ course_ids: courseIdsArray })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Bulk assignment failed');
+            }
+
+            setNotice({ message: `${courseIdsArray.length} courses assigned to timetable`, type: 'success' });
+            setSelectedMasterCourseIds(new Set());
+            fetchAll();
+        } catch (err) {
+            setNotice({ message: err.message, type: 'error' });
+        }
+    };
+
+    const toggleMasterCourseSelection = (id) => {
+        const newSet = new Set(selectedMasterCourseIds);
+        if (newSet.has(id)) {
+            newSet.delete(id);
+        } else {
+            newSet.add(id);
+        }
+        setSelectedMasterCourseIds(newSet);
+    };
+
+    const toggleAllMasterCourses = () => {
+        if (selectedMasterCourseIds.size === filteredMasterCourses.length && filteredMasterCourses.length > 0) {
+            setSelectedMasterCourseIds(new Set());
+        } else {
+            setSelectedMasterCourseIds(new Set(filteredMasterCourses.map(c => c.id)));
         }
     };
 
@@ -712,7 +876,31 @@ const AdminManager = () => {
 
                     {/* Add/Edit Master Course Form */}
                     <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
-                        <h4 className="font-medium text-slate-700 mb-4">{editingMasterCourseId ? 'Edit Master Course' : 'Add New Master Course'}</h4>
+                        <div className="flex justify-between items-center mb-4">
+                            <h4 className="font-medium text-slate-700">{editingMasterCourseId ? 'Edit Master Course' : 'Add New Master Course'}</h4>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={downloadSampleCSV}
+                                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded-lg flex items-center gap-1 transition-colors border border-slate-300"
+                                    title="Download Sample CSV Template"
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                    </svg>
+                                    Template
+                                </button>
+                                <input type="file" id="bulkUploadMaster" accept=".csv" className="hidden" onChange={handleBulkUpload} />
+                                <button
+                                    onClick={() => document.getElementById('bulkUploadMaster').click()}
+                                    className="px-3 py-1.5 bg-[#059669] hover:bg-[#047857] text-white text-sm font-medium rounded-lg flex items-center gap-1 transition-colors"
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                                    </svg>
+                                    Bulk Upload CSV
+                                </button>
+                            </div>
+                        </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                             {/* Course Code */}
                             <div>
@@ -923,13 +1111,28 @@ const AdminManager = () => {
                     {/* Assignment Control */}
                     <div className="mb-4 p-4 bg-emerald-50 rounded-lg border border-emerald-200">
                         <label className="block text-sm font-medium text-emerald-800 mb-2">Quick Assign: Select Timetable to Assign Courses</label>
-                        <FormSelect
-                            value={selectedTimetableForAssign}
-                            onChange={(e) => setSelectedTimetableForAssign(e.target.value)}
-                        >
-                            <option value="">Select a Timetable...</option>
-                            {timetables.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                        </FormSelect>
+                        <div className="flex gap-3">
+                            <div className="flex-1">
+                                <FormSelect
+                                    value={selectedTimetableForAssign}
+                                    onChange={(e) => setSelectedTimetableForAssign(e.target.value)}
+                                >
+                                    <option value="">Select a Timetable...</option>
+                                    {timetables.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                </FormSelect>
+                            </div>
+                            <button
+                                onClick={assignBulkCoursesToTimetable}
+                                disabled={!selectedTimetableForAssign || selectedMasterCourseIds.size === 0}
+                                className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                                    selectedTimetableForAssign && selectedMasterCourseIds.size > 0
+                                        ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
+                                        : 'bg-emerald-100 text-emerald-400 cursor-not-allowed'
+                                }`}
+                            >
+                                Assign Selected ({selectedMasterCourseIds.size})
+                            </button>
+                        </div>
                     </div>
 
                     {/* Filters */}
@@ -963,8 +1166,16 @@ const AdminManager = () => {
                             <table className="w-full">
                                 <thead>
                                     <tr className="border-b border-slate-200">
+                                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase w-10">
+                                            <input 
+                                                type="checkbox" 
+                                                checked={filteredMasterCourses.length > 0 && selectedMasterCourseIds.size === filteredMasterCourses.length}
+                                                onChange={toggleAllMasterCourses}
+                                                className="w-4 h-4 text-[#4c1d95] border-slate-300 rounded focus:ring-[#4c1d95]"
+                                            />
+                                        </th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Code</th>
-                                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Title</th>
+                                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase min-w-[200px]">Title</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Dept</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Level</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Type</th>
@@ -974,11 +1185,19 @@ const AdminManager = () => {
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {filteredMasterCourses.map(course => (
-                                        <tr key={course.id} className="hover:bg-slate-50">
+                                        <tr key={course.id} className={`hover:bg-slate-50 ${selectedMasterCourseIds.has(course.id) ? 'bg-purple-50/50' : ''}`}>
+                                            <td className="py-3 px-4">
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={selectedMasterCourseIds.has(course.id)}
+                                                    onChange={() => toggleMasterCourseSelection(course.id)}
+                                                    className="w-4 h-4 text-[#4c1d95] border-slate-300 rounded focus:ring-[#4c1d95]"
+                                                />
+                                            </td>
                                             <td className="py-3 px-4">
                                                 <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-bold rounded">{course.code}</span>
                                             </td>
-                                            <td className="py-3 px-4 text-slate-800 font-medium">{course.title}</td>
+                                            <td className="py-3 px-4 text-slate-800 font-medium whitespace-normal break-words">{course.title}</td>
                                             <td className="py-3 px-4">
                                                 <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs rounded">{course.department}</span>
                                             </td>

@@ -13,6 +13,7 @@ server/dist/
 # Runtime and logs
 *.log
 logs/
+server/database/*.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

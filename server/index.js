@@ -126,7 +126,16 @@ const buildExcelGrid = async (rows, sheetTitle) => {
     EXPORT_DAYS.forEach((day, dIdx) => {
         const excelRowIndex = dIdx + 2;
         const dataRow = ws.addRow([day, ...EXPORT_TIMES.map(() => '')]);
-        dataRow.height = 60;
+
+        // Row height: each course occupies 2 text lines (code + venue) plus 1 separator
+        // line between courses → (3n - 1) lines total. At ~15pt/line + padding, 55pt
+        // per course ensures all content is fully visible without clipping.
+        const maxCoursesInSlot = Math.max(
+            1,
+            ...EXPORT_TIMES.map(time => rows.filter(r => r.day === day && r.time === time).length)
+        );
+        dataRow.height = Math.max(55, maxCoursesInSlot * 55);
+
         const dayCell = dataRow.getCell(1);
         dayCell.font = { bold: true };
         dayCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
@@ -136,18 +145,30 @@ const buildExcelGrid = async (rows, sheetTitle) => {
         const consumed = new Set();
         EXPORT_TIMES.forEach((time, tIdx) => {
             const colNumber = tIdx + 2;
-            const cell = dataRow.getCell(colNumber);
-            cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+            // Skip slave cells of already-merged regions entirely
             if (consumed.has(tIdx)) return;
             const courses = rows.filter(r => r.day === day && r.time === time);
-            cell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true };
-            if (courses.length === 0) return;
-            const colSpan = Math.max(1, Math.round((courses[0].duration_minutes || 60) / 60));
-            cell.value = courses.map(c => `${c.code}\n${c.venue || 'Unassigned'}`).join('\n· · · · ·\n');
-            for (let c = 1; c < colSpan && tIdx + c < EXPORT_TIMES.length; c++) consumed.add(tIdx + c);
-            if (colSpan > 1) {
-                const endCol = Math.min(colNumber + colSpan - 1, EXPORT_TIMES.length + 1);
+            const colSpan = courses.length > 0
+                ? Math.max(1, Math.round((courses[0].duration_minutes || 60) / 60))
+                : 1;
+            const clampedSpan = Math.min(colSpan, EXPORT_TIMES.length - tIdx);
+
+            // Mark consumed slots BEFORE touching any cells
+            for (let c = 1; c < clampedSpan; c++) consumed.add(tIdx + c);
+
+            // Merge FIRST — ExcelJS resets all cells in the range on merge,
+            // so any value set before mergeCells() would be wiped.
+            if (clampedSpan > 1) {
+                const endCol = colNumber + clampedSpan - 1;
                 ws.mergeCells(excelRowIndex, colNumber, excelRowIndex, endCol);
+            }
+
+            // Now safe to write to the master cell (the merge is already done)
+            const cell = dataRow.getCell(colNumber);
+            cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+            cell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true };
+            if (courses.length > 0) {
+                cell.value = courses.map(c => `${c.code}\n${c.venue || 'Unassigned'}`).join('\n· · · · ·\n');
             }
         });
     });

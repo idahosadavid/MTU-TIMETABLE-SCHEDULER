@@ -1,4 +1,14 @@
 require('dotenv').config();
+const crypto = require('crypto');
+
+const timingSafeEqual = (a, b) => {
+    if (typeof a !== 'string' || typeof b !== 'string') {
+        return false;
+    }
+    const aHash = crypto.createHash('sha256').update(a).digest();
+    const bHash = crypto.createHash('sha256').update(b).digest();
+    return crypto.timingSafeEqual(aHash, bHash);
+};
 
 const express = require('express');
 const cors = require('cors');
@@ -336,11 +346,28 @@ const withVenueSeatsAlias = (venue) => ({
     seats: Number(venue?.capacity || 0)
 });
 
-// Manual login is disabled — access must be via MTU Portal SSO redirect.
-const handleStudentLogin = (req, res) => {
-    return res.status(403).json({
-        error: 'Direct login is not supported. Please access your timetable through the MTU Student Portal.'
-    });
+// Direct Student Login (Legacy Only)
+const handleStudentLogin = async (req, res) => {
+    if (isPortalTokenMode()) {
+        return res.status(403).json({
+            error: 'Direct login is not supported. Please access your timetable through the MTU Student Portal.'
+        });
+    }
+
+    const { matric_number } = req.body || {};
+    if (!matric_number) {
+        return res.status(400).json({ error: 'matric_number is required' });
+    }
+
+    try {
+        const student = await studentsRepo.getByMatric(matric_number);
+        if (!student) {
+            return res.status(404).json({ error: 'Student not found' });
+        }
+        return res.json({ data: student });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
 };
 
 const getBearerToken = (authorizationHeader = '') => {
@@ -362,7 +389,7 @@ const requireAdmin = (req, res, next) => {
         return res.status(503).json({ error: 'Admin access is not configured. Set ADMIN_API_KEY in .env.' });
     }
     const provided = req.headers['x-admin-key'];
-    if (!provided || provided !== ADMIN_API_KEY) {
+    if (!provided || !timingSafeEqual(provided, ADMIN_API_KEY)) {
         return res.status(401).json({ error: 'Unauthorized. Valid admin key required.' });
     }
     next();
@@ -504,7 +531,7 @@ console.log('Registering Student API Routes...');
 
 app.post('/api/student/portal/session', async (req, res) => {
     const incomingSecret = req.headers['x-mtu-portal-secret'];
-    if (!MTU_PORTAL_SHARED_SECRET || incomingSecret !== MTU_PORTAL_SHARED_SECRET) {
+    if (!MTU_PORTAL_SHARED_SECRET || !timingSafeEqual(incomingSecret, MTU_PORTAL_SHARED_SECRET)) {
         return res.status(401).json({ error: 'Unauthorized integration client' });
     }
 
@@ -542,7 +569,7 @@ app.post('/api/student/portal/session', async (req, res) => {
 
 app.post('/api/student/portal/authorize', async (req, res) => {
     const incomingSecret = req.headers['x-mtu-portal-secret'];
-    if (!MTU_PORTAL_SHARED_SECRET || incomingSecret !== MTU_PORTAL_SHARED_SECRET) {
+    if (!MTU_PORTAL_SHARED_SECRET || !timingSafeEqual(incomingSecret, MTU_PORTAL_SHARED_SECRET)) {
         return res.status(401).json({ error: 'Unauthorized integration client' });
     }
 
@@ -614,12 +641,14 @@ app.post('/api/student/portal/exchange', async (req, res) => {
 app.post('/api/student/login', (req, res) => handleStudentLogin(req, res));
 
 // Get Student Timetable
-app.get('/api/student/:matric_number/timetable', (req, res) => {
+app.get(/^\/api\/student\/(.+)\/timetable$/, (req, res) => {
+    req.params.matric_number = req.params[0];
     handleStudentTimetable(req, res);
 });
 
 // Export Student Timetable (Excel, PDF, Word)
-app.get('/api/student/:matric_number/timetable/export', async (req, res) => {
+app.get(/^\/api\/student\/(.+)\/timetable\/export$/, async (req, res) => {
+    req.params.matric_number = req.params[0];
     const { matric_number } = req.params;
     const { format = 'excel' } = req.query;
 
@@ -1067,7 +1096,7 @@ app.get('/api/courses/master', (req, res) => {
         .then(courses => res.json({ data: courses }))
         .catch(err => {
             console.error('getMasterCourses error:', err);
-            res.status(400).json({ error: err.message || 'Unknown error', stack: err.stack });
+            res.status(400).json({ error: err.message || 'Unknown error' });
         });
 });
 
@@ -1142,7 +1171,7 @@ app.delete('/api/courses/:id', requireAdmin, (req, res) => {
 // --- Timetable-Courses Relationship APIs ---
 
 // Diagnostic: Direct Supabase test
-app.get('/api/debug/supabase', async (req, res) => {
+app.get('/api/debug/supabase', requireAdmin, async (req, res) => {
     try {
         const { getSupabaseClient } = require('./database/supabaseAdapter');
         const supabase = getSupabaseClient();
@@ -1171,7 +1200,7 @@ app.get('/api/debug/supabase', async (req, res) => {
         });
     } catch (err) {
         console.error('Debug endpoint error:', err);
-        res.status(500).json({ error: err.message, stack: err.stack });
+        res.status(500).json({ error: err.message });
     }
 });
 

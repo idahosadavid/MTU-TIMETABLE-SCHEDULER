@@ -1,5 +1,8 @@
 const axios = require('axios');
 
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'mtu-admin-2024-s3cur3k3y!';
+axios.defaults.headers.common['x-admin-key'] = ADMIN_API_KEY;
+
 const BASE_URL = 'http://localhost:5000/api';
 
 async function runVerification() {
@@ -12,7 +15,8 @@ async function runVerification() {
             name: 'Verification Timetable',
             academic_session: '2024/2025',
             semester: 'First',
-            type: 'Lecture'
+            type: 'Lecture',
+            college: 'CBAS'
         });
         const timetableId = timetableRes.data.id;
         console.log(`   Timetable created with ID: ${timetableId}`);

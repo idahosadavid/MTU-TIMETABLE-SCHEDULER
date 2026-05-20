@@ -1,3 +1,5 @@
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
+
 if (!process.env.DB_PROVIDER) {
     process.env.DB_PROVIDER = 'supabase';
 }

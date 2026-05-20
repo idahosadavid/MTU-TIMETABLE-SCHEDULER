@@ -1,7 +1,4 @@
-const fetch = require('node-fetch'); // Ensure node-fetch is available or use built-in fetch in Node 18+
-
-// If node-fetch is not available, we can rely on Node 18+ global fetch or use http module.
-// Assuming Node 18+ environment based on "2026" date.
+const fetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : require('node-fetch');
 
 async function verify() {
     console.log('--- Verifying MTU Student Integration ---');

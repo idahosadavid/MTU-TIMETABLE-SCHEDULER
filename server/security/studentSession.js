@@ -29,6 +29,15 @@ const createStudentSessionToken = (matricNumber, ttlSeconds = DEFAULT_TTL_SECOND
     return `${payloadEncoded}.${signature}`;
 };
 
+const timingSafeEqual = (a, b) => {
+    if (typeof a !== 'string' || typeof b !== 'string') {
+        return false;
+    }
+    const aHash = crypto.createHash('sha256').update(a).digest();
+    const bHash = crypto.createHash('sha256').update(b).digest();
+    return crypto.timingSafeEqual(aHash, bHash);
+};
+
 const verifyStudentSessionToken = (token) => {
     const secret = getSessionSecret();
     if (!secret) {
@@ -45,7 +54,7 @@ const verifyStudentSessionToken = (token) => {
     }
 
     const expected = sign(payloadEncoded, secret);
-    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+    if (!timingSafeEqual(signature, expected)) {
         return null;
     }
 

@@ -1,3 +1,5 @@
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
+
 const fetchClient = (...args) => fetch(...args);
 
 async function verifyPortalCarryoverFlow() {

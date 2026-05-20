@@ -1,4 +1,4 @@
-const fetch = require('node-fetch');
+const fetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : require('node-fetch');
 
 // Verification Script v2: Testing Refined Data Model
 async function verify() {

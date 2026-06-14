@@ -5,6 +5,7 @@ import TimetableView from './components/TimetableView';
 import StudentPortal from './components/StudentPortal';
 import AdminManager from './components/AdminManager';
 import AdminLogin from './components/AdminLogin';
+import AuditLog from './components/AuditLog';
 import { isAdminAuthenticated, clearAdminKey, subscribeToAuthChanges } from './adminAuth';
 import mtuLogo from "../../mtulogo.jpg";
 
@@ -54,23 +55,23 @@ function App() {
   const isAdmin = isAdminAuthenticated();
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50 flex flex-col">
       {/* Branded Navigation */}
-      <nav className="bg-[#4c1d95] text-white shadow-lg">
+      <nav className="bg-[#4c1d95] text-white shadow-lg sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             {/* Logo and Brand */}
             <Link to="/" className="flex items-center gap-3 group">
               <div className="relative w-10 h-10 rounded-full overflow-hidden bg-white p-1 shadow-md group-hover:shadow-lg transition-shadow">
-                <img 
-                  src={mtuLogo} 
-                  alt="MTU Logo" 
+                <img
+                  src={mtuLogo}
+                  alt="MTU Logo"
                   className="w-full h-full object-contain"
                 />
               </div>
-              <div className="hidden sm:block">
-                <span className="text-lg font-bold tracking-tight">MTU Timetable</span>
-                <span className="hidden md:inline text-emerald-400 ml-2 text-sm font-medium">Scheduler</span>
+              <div>
+                <div className="text-base font-bold tracking-tight leading-none">MTU Timetable</div>
+                <div className="text-emerald-400 text-[11px] font-medium leading-tight tracking-wide hidden sm:block">Scheduler</div>
               </div>
             </Link>
 
@@ -80,49 +81,69 @@ function App() {
                 <>
                   <NavLink
                     to="/"
-                    className={({ isActive }) => 
-                      `px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                        isActive 
-                          ? 'bg-[#3b0764] text-white shadow-inner' 
+                    className={({ isActive }) =>
+                      `px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
+                        isActive
+                          ? 'bg-white/15 text-white'
                           : 'text-white/80 hover:text-white hover:bg-white/10'
                       }`
                     }
                     end
                   >
-                    <span className="hidden sm:inline">Admin Portal</span>
-                    <span className="sm:hidden">Dashboard</span>
+                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                    </svg>
+                    <span className="hidden sm:inline">Dashboard</span>
                   </NavLink>
                   <NavLink
                     to="/admin"
-                    className={({ isActive }) => 
-                      `px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                        isActive 
-                          ? 'bg-[#3b0764] text-white shadow-inner' 
+                    className={({ isActive }) =>
+                      `px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
+                        isActive
+                          ? 'bg-white/15 text-white'
                           : 'text-white/80 hover:text-white hover:bg-white/10'
                       }`
                     }
                   >
-                    <span className="hidden sm:inline">Admin Setup</span>
-                    <span className="sm:hidden">Setup</span>
+                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <span className="hidden sm:inline">Setup</span>
                   </NavLink>
+                  <NavLink
+                    to="/audit-log"
+                    className={({ isActive }) =>
+                      `px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
+                        isActive
+                          ? 'bg-white/15 text-white'
+                          : 'text-white/80 hover:text-white hover:bg-white/10'
+                      }`
+                    }
+                  >
+                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    <span className="hidden sm:inline">Audit</span>
+                  </NavLink>
+                  <div className="w-px h-5 bg-white/20 mx-1 hidden sm:block" />
                 </>
               )}
               <NavLink
                 to="/student"
-                className={({ isActive }) => 
-                  `px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-1 ${
-                    isActive 
-                      ? 'bg-[#3b0764] text-white shadow-inner' 
+                className={({ isActive }) =>
+                  `px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
+                    isActive
+                      ? 'bg-white/15 text-white'
                       : 'text-white/80 hover:text-white hover:bg-white/10'
                   }`
                 }
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l9-5-9-5-9 5 9 5z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l6.16-3.422A12.083 12.083 0 0121 21H3a12.083 12.083 0 012.84-10.422L12 14z" />
                 </svg>
-                <span className="hidden sm:inline">Student Portal</span>
-                <span className="sm:hidden">Student</span>
+                <span className="hidden sm:inline">Students</span>
               </NavLink>
               <AdminNav isAdmin={isAdmin} />
             </div>
@@ -131,7 +152,7 @@ function App() {
       </nav>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         <Routes>
           {/* Public — student portal (no login needed) */}
           <Route path="/student" element={<StudentPortal />} />
@@ -143,11 +164,23 @@ function App() {
           <Route path="/" element={<AdminRoute><TimetableList /></AdminRoute>} />
           <Route path="/timetable/:id" element={<AdminRoute><TimetableView /></AdminRoute>} />
           <Route path="/admin" element={<AdminRoute><AdminManager /></AdminRoute>} />
+          <Route path="/audit-log" element={<AdminRoute><AuditLog /></AdminRoute>} />
 
           {/* Catch-all */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+
+      {/* Footer */}
+      <footer className="border-t border-slate-200 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-400">
+          <span>© {new Date().getFullYear()} Mountain Top University · Timetable Scheduler</span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>
+            AI-Powered Conflict-Free Scheduling
+          </span>
+        </div>
+      </footer>
     </div>
   );
 }

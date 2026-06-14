@@ -7,17 +7,35 @@ import getNoticeTimeoutMs from '../noticeTimeout';
 
 // Stats Card Component
 const StatCard = ({ icon, label, value, color, subtext }) => (
-    <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 hover:shadow-md transition-shadow">
+    <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-default">
         <div className="flex items-start justify-between">
             <div>
                 <p className="text-sm font-medium text-slate-500 mb-1">{label}</p>
-                <p className="text-2xl font-bold text-slate-900">{value}</p>
+                <p className="text-3xl font-bold text-slate-900">{value}</p>
                 {subtext && <p className="text-xs text-slate-400 mt-1">{subtext}</p>}
             </div>
-            <div className={`p-3 rounded-lg ${color}`}>
+            <div className={`p-3 rounded-xl ${color}`}>
                 {icon}
             </div>
         </div>
+    </div>
+);
+
+// Skeleton loader for the table
+const TableSkeleton = () => (
+    <div className="space-y-3 p-2">
+        {[...Array(4)].map((_, i) => (
+            <div key={i} className="flex items-center gap-4 p-3">
+                <div className="skeleton w-8 h-8 rounded-lg shrink-0" />
+                <div className="flex-1 space-y-2">
+                    <div className="skeleton h-3.5 rounded w-1/3" />
+                    <div className="skeleton h-3 rounded w-1/5" />
+                </div>
+                <div className="skeleton h-5 w-16 rounded-md hidden sm:block" />
+                <div className="skeleton h-5 w-16 rounded-md hidden md:block" />
+                <div className="skeleton h-5 w-20 rounded-md hidden lg:block" />
+            </div>
+        ))}
     </div>
 );
 
@@ -203,12 +221,6 @@ const TimetableList = () => {
         }
     };
 
-    if (loading) return (
-        <div className="flex items-center justify-center min-h-[50vh]">
-            <div className="animate-pulse text-slate-500">Loading timetables...</div>
-        </div>
-    );
-
     return (
         <div className="space-y-8">
             <FloatingNotice
@@ -228,6 +240,29 @@ const TimetableList = () => {
                 onDismiss={() => setActionNotice({ message: '', type: 'info' })}
                 stackIndex={0}
             />
+
+            {/* Hero Banner */}
+            <div className="bg-gradient-to-r from-[#4c1d95] via-[#6d28d9] to-[#4c1d95] rounded-2xl p-6 sm:p-8 text-white shadow-lg overflow-hidden relative">
+                <div className="absolute inset-0 opacity-10">
+                    <div className="absolute -top-8 -right-8 w-48 h-48 rounded-full bg-white" />
+                    <div className="absolute -bottom-12 -left-12 w-64 h-64 rounded-full bg-white" />
+                </div>
+                <div className="relative flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div>
+                        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Admin Dashboard</h1>
+                        <p className="text-purple-200 text-sm mt-1">Manage timetables and generate conflict-free schedules for Mountain Top University</p>
+                    </div>
+                    <button
+                        onClick={() => setShowCreateModal(true)}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-white text-[#4c1d95] rounded-xl font-semibold text-sm hover:bg-purple-50 transition-colors shadow-md shrink-0"
+                    >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                        </svg>
+                        New Timetable
+                    </button>
+                </div>
+            </div>
 
             {/* Institutional Stats Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -312,7 +347,9 @@ const TimetableList = () => {
                     </div>
                 </div>
 
-                {timetables.length === 0 ? (
+                {loading ? (
+                    <TableSkeleton />
+                ) : timetables.length === 0 ? (
                     <div className="text-center py-16 bg-slate-50 rounded-xl border border-slate-200 border-dashed">
                         <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
                             <svg className="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -381,10 +418,10 @@ const TimetableList = () => {
                                             {new Date(timetable.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                                         </td>
                                         <td className="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                            <div className="flex justify-end items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <div className="flex justify-end items-center gap-1">
                                                 <button
                                                     onClick={(e) => handleDuplicate(timetable.id, e)}
-                                                    className="p-1.5 text-slate-500 hover:text-purple-600 hover:bg-purple-50 rounded-md transition-colors"
+                                                    className="p-1.5 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded-md transition-colors"
                                                     title="Duplicate"
                                                 >
                                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -393,7 +430,7 @@ const TimetableList = () => {
                                                 </button>
                                                 <button
                                                     onClick={(e) => handleDelete(timetable.id, e)}
-                                                    className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                                    className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
                                                     title="Delete"
                                                 >
                                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

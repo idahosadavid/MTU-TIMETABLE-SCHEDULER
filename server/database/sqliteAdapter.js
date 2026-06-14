@@ -185,6 +185,16 @@ const initSqliteDatabase = () => {
             FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE,
             UNIQUE(timetable_id, course_id)
         )`);
+
+        db.run(`CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_id TEXT,
+            detail TEXT,
+            ip_address TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
     });
 };
 

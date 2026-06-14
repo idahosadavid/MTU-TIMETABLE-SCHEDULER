@@ -103,6 +103,9 @@ const TimetableView = () => {
     const [changeNotice, setChangeNotice] = useState('');
     const [actionNotice, setActionNotice] = useState({ message: '', type: 'info' });
     const [lastCheckedAt, setLastCheckedAt] = useState(null);
+    const [conflicts, setConflicts] = useState(null);
+    const [conflictsLoading, setConflictsLoading] = useState(false);
+    const [showConflicts, setShowConflicts] = useState(false);
     const previousSignatureRef = useRef('');
     const suppressNextNotificationRef = useRef(false);
 
@@ -394,6 +397,24 @@ const TimetableView = () => {
         }
     };
 
+    const handleCheckConflicts = async () => {
+        setConflictsLoading(true);
+        setShowConflicts(true);
+        try {
+            const res = await fetch(`${API_BASE_URL}/timetables/${timetableId}/conflicts`, {
+                headers: adminHeaders()
+            });
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.error || 'Failed to check conflicts');
+            setConflicts(json.data || []);
+        } catch (err) {
+            setConflicts(null);
+            setActionNotice({ message: err.message, type: 'error' });
+        } finally {
+            setConflictsLoading(false);
+        }
+    };
+
     const handleGenerate = async () => {
         try {
             setPoolLoading(true);
@@ -573,8 +594,54 @@ const TimetableView = () => {
                             )}
                             Generate Timetable
                         </button>
+                        <button
+                            onClick={handleCheckConflicts}
+                            disabled={conflictsLoading}
+                            className="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 shadow-sm bg-orange-500 text-white hover:bg-orange-600 hover:shadow-md disabled:opacity-50"
+                        >
+                            {conflictsLoading ? (
+                                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                                </svg>
+                            ) : (
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                            )}
+                            Check Conflicts
+                            {conflicts !== null && (
+                                <span className={`ml-1 px-1.5 py-0.5 rounded-full text-xs font-bold ${conflicts.length > 0 ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'}`}>
+                                    {conflicts.length}
+                                </span>
+                            )}
+                        </button>
                     </div>
                 </div>
+
+                {/* Conflicts Panel */}
+                {showConflicts && conflicts !== null && (
+                    <div className={`mt-4 p-4 rounded-xl border ${conflicts.length === 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                        <div className="flex items-center justify-between mb-2">
+                            <h3 className={`font-semibold text-sm ${conflicts.length === 0 ? 'text-green-800' : 'text-red-800'}`}>
+                                {conflicts.length === 0 ? '✓ No conflicts detected' : `${conflicts.length} conflict${conflicts.length !== 1 ? 's' : ''} detected`}
+                            </h3>
+                            <button onClick={() => setShowConflicts(false)} className="text-slate-400 hover:text-slate-600 text-xs">
+                                Dismiss
+                            </button>
+                        </div>
+                        {conflicts.length > 0 && (
+                            <ul className="space-y-1 max-h-48 overflow-y-auto">
+                                {conflicts.map((c, i) => (
+                                    <li key={i} className="flex items-start gap-2 text-xs text-red-700">
+                                        <span className="mt-0.5 shrink-0 px-1.5 py-0.5 rounded bg-red-100 font-semibold uppercase">{c.type}</span>
+                                        <span>{c.message}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                )}
 
                 {/* Export Controls */}
                 <div className="mt-6 pt-6 border-t border-slate-100 flex flex-wrap items-center gap-3">

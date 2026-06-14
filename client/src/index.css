@@ -91,3 +91,45 @@ h1, h2, h3, h4, h5, h6 {
     background-color: var(--mtu-secondary-dark);
   }
 }
+
+/* Smooth page transitions */
+main > * {
+  animation: fadeInUp 0.25s ease-out both;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Card hover lift */
+.card-hover {
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.card-hover:hover {
+  box-shadow: 0 8px 24px rgba(76, 29, 149, 0.12);
+  transform: translateY(-2px);
+}
+
+/* Gradient hero */
+.hero-gradient {
+  background: linear-gradient(135deg, #4c1d95 0%, #6d28d9 50%, #059669 150%);
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 6px;
+}

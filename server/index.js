@@ -1,5 +1,6 @@
 require('dotenv').config();
 const crypto = require('crypto');
+const { rateLimit } = require('express-rate-limit');
 
 const timingSafeEqual = (a, b) => {
     if (typeof a !== 'string' || typeof b !== 'string') {
@@ -13,7 +14,7 @@ const timingSafeEqual = (a, b) => {
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const { initDatabase } = require('./database/schema');
+const { initDatabase, db: rawDb, DB_PROVIDER } = require('./database/schema');
 const { repositories } = require('./data/repositories');
 const path = require('path');
 const { createStudentSessionToken, verifyStudentSessionToken, DEFAULT_TTL_SECONDS } = require('./security/studentSession');
@@ -56,6 +57,27 @@ app.use(cors({
     exposedHeaders: ['Content-Disposition']
 }));
 app.use(bodyParser.json());
+
+// Rate limiting
+const generalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests, please try again later.' }
+});
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many authentication attempts, please try again later.' }
+});
+app.use('/api', generalLimiter);
+app.use('/api/student/login', authLimiter);
+app.use('/api/student/portal/authorize', authLimiter);
+app.use('/api/student/portal/exchange', authLimiter);
+app.use('/api/admin/ping', authLimiter);
 
 process.on('exit', (code) => {
     console.log(`About to exit with code: ${code}`);
@@ -752,7 +774,10 @@ app.get('/api/admin/colleges', (req, res) => {
 app.post('/api/admin/colleges', requireAdmin, (req, res) => {
     const { code, name, is_active = 1 } = req.body;
     adminRepo.createCollege({ code, name, is_active })
-        .then(result => res.json({ message: 'College added', id: result.lastID }))
+        .then(result => {
+            writeAuditLog('CREATE', 'college', result.lastID, `code=${code} name=${name}`, req.ip);
+            res.json({ message: 'College added', id: result.lastID });
+        })
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
@@ -760,14 +785,20 @@ app.put('/api/admin/colleges/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { code, name, is_active = 1 } = req.body;
     adminRepo.updateCollege(id, { code, name, is_active })
-        .then(() => res.json({ message: 'College updated' }))
+        .then(() => {
+            writeAuditLog('UPDATE', 'college', id, `code=${code} name=${name}`, req.ip);
+            res.json({ message: 'College updated' });
+        })
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
 app.delete('/api/admin/colleges/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     adminRepo.deleteCollege(id)
-        .then(() => res.json({ message: 'College deleted' }))
+        .then(() => {
+            writeAuditLog('DELETE', 'college', id, null, req.ip);
+            res.json({ message: 'College deleted' });
+        })
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
@@ -781,7 +812,10 @@ app.get('/api/admin/departments', (req, res) => {
 app.post('/api/admin/departments', requireAdmin, (req, res) => {
     const { code, name, college_code, is_active = 1 } = req.body;
     adminRepo.createDepartment({ code, name, college_code, is_active })
-        .then(result => res.json({ message: 'Department added', id: result.lastID }))
+        .then(result => {
+            writeAuditLog('CREATE', 'department', result.lastID, `code=${code} name=${name} college=${college_code}`, req.ip);
+            res.json({ message: 'Department added', id: result.lastID });
+        })
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
@@ -789,14 +823,20 @@ app.put('/api/admin/departments/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { code, name, college_code, is_active = 1 } = req.body;
     adminRepo.updateDepartment(id, { code, name, college_code, is_active })
-        .then(() => res.json({ message: 'Department updated' }))
+        .then(() => {
+            writeAuditLog('UPDATE', 'department', id, `code=${code} name=${name}`, req.ip);
+            res.json({ message: 'Department updated' });
+        })
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
 app.delete('/api/admin/departments/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     adminRepo.deleteDepartment(id)
-        .then(() => res.json({ message: 'Department deleted' }))
+        .then(() => {
+            writeAuditLog('DELETE', 'department', id, null, req.ip);
+            res.json({ message: 'Department deleted' });
+        })
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
@@ -809,7 +849,10 @@ app.get('/api/admin/lecturers', (req, res) => {
 app.post('/api/admin/lecturers', requireAdmin, (req, res) => {
     const { name, department_code, email = null } = req.body;
     adminRepo.createLecturer({ name, department_code, email })
-        .then(result => res.json({ message: 'Lecturer added', id: result.lastID }))
+        .then(result => {
+            writeAuditLog('CREATE', 'lecturer', result.lastID, `name=${name} dept=${department_code}`, req.ip);
+            res.json({ message: 'Lecturer added', id: result.lastID });
+        })
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
@@ -817,14 +860,20 @@ app.put('/api/admin/lecturers/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { name, department_code, email = null } = req.body;
     adminRepo.updateLecturer(id, { name, department_code, email })
-        .then(() => res.json({ message: 'Lecturer updated' }))
+        .then(() => {
+            writeAuditLog('UPDATE', 'lecturer', id, `name=${name}`, req.ip);
+            res.json({ message: 'Lecturer updated' });
+        })
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
 app.delete('/api/admin/lecturers/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     adminRepo.deleteLecturer(id)
-        .then(() => res.json({ message: 'Lecturer deleted' }))
+        .then(() => {
+            writeAuditLog('DELETE', 'lecturer', id, null, req.ip);
+            res.json({ message: 'Lecturer deleted' });
+        })
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
@@ -838,7 +887,10 @@ app.post('/api/admin/venues', requireAdmin, (req, res) => {
     const { name, college_code = null } = req.body;
     const capacity = parseVenueSeats(req.body);
     adminRepo.createVenue({ name, college_code, capacity })
-        .then(result => res.json({ message: 'Venue added', id: result.lastID, seats: capacity }))
+        .then(result => {
+            writeAuditLog('CREATE', 'venue', result.lastID, `name=${name} capacity=${capacity}`, req.ip);
+            res.json({ message: 'Venue added', id: result.lastID, seats: capacity });
+        })
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
@@ -847,14 +899,20 @@ app.put('/api/admin/venues/:id', requireAdmin, (req, res) => {
     const { name, college_code = null } = req.body;
     const capacity = parseVenueSeats(req.body);
     adminRepo.updateVenue(id, { name, college_code, capacity })
-        .then(() => res.json({ message: 'Venue updated', seats: capacity }))
+        .then(() => {
+            writeAuditLog('UPDATE', 'venue', id, `name=${name} capacity=${capacity}`, req.ip);
+            res.json({ message: 'Venue updated', seats: capacity });
+        })
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
 app.delete('/api/admin/venues/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     adminRepo.deleteVenue(id)
-        .then(() => res.json({ message: 'Venue deleted' }))
+        .then(() => {
+            writeAuditLog('DELETE', 'venue', id, null, req.ip);
+            res.json({ message: 'Venue deleted' });
+        })
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
@@ -1492,6 +1550,7 @@ const handleGenerate = async (req, res, generateFn, type) => {
             }
         }
 
+        writeAuditLog('GENERATE', 'timetable', timetable_id, `type=${type} scope=${scope} dept=${department || 'all'}`, req.ip);
         res.json({
             message: `${type} timetable generated`,
             id: timetable_id,
@@ -1647,6 +1706,120 @@ app.get('/api/timetables/:id/export', async (req, res) => {
     }
 });
 
+
+// --- Audit Log ---
+
+const writeAuditLog = (action, entity_type, entity_id, detail, ip_address) => {
+    if (DB_PROVIDER !== 'sqlite' || !rawDb) return;
+    rawDb.run(
+        `INSERT INTO audit_log (action, entity_type, entity_id, detail, ip_address) VALUES (?, ?, ?, ?, ?)`,
+        [action, entity_type, String(entity_id ?? ''), detail ?? null, ip_address ?? null],
+        (err) => { if (err) console.error('[AuditLog] write error:', err.message); }
+    );
+};
+
+app.get('/api/admin/audit-log', requireAdmin, (req, res) => {
+    if (DB_PROVIDER !== 'sqlite' || !rawDb) {
+        return res.json({ data: [], note: 'Audit log is only available with the SQLite provider.' });
+    }
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Number(req.query.offset) || 0;
+    rawDb.all(
+        `SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        [limit, offset],
+        (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ data: rows || [] });
+        }
+    );
+});
+
+// --- Conflict Detection ---
+
+app.get('/api/timetables/:id/conflicts', requireAdmin, async (req, res) => {
+    try {
+        const timetable = await timetablesRepo.getRawById(req.params.id);
+        if (!timetable) return res.status(404).json({ error: 'Timetable not found' });
+
+        let data;
+        try {
+            data = typeof timetable.data === 'string' ? JSON.parse(timetable.data) : timetable.data;
+        } catch {
+            data = { scheduled: [] };
+        }
+
+        const courses = Array.isArray(data) ? data : (data.scheduled || []);
+        const conflicts = [];
+
+        const parseMinutes = (t) => {
+            if (!t) return null;
+            const [h, m] = String(t).split(':').map(Number);
+            return h * 60 + (m || 0);
+        };
+
+        for (let i = 0; i < courses.length; i++) {
+            for (let j = i + 1; j < courses.length; j++) {
+                const a = courses[i];
+                const b = courses[j];
+                if (!a.day || !b.day || a.day !== b.day) continue;
+
+                const aStart = parseMinutes(a.time);
+                const bStart = parseMinutes(b.time);
+                if (aStart === null || bStart === null) continue;
+
+                const aEnd = aStart + (a.duration || 60);
+                const bEnd = bStart + (b.duration || 60);
+                const overlap = aStart < bEnd && bStart < aEnd;
+                if (!overlap) continue;
+
+                // Venue conflict
+                if (a.venue && b.venue && a.venue === b.venue) {
+                    conflicts.push({
+                        type: 'venue',
+                        day: a.day,
+                        time: a.time,
+                        venue: a.venue,
+                        courses: [a.code, b.code],
+                        message: `Venue "${a.venue}" double-booked on ${a.day} at ${a.time} (${a.code} & ${b.code})`
+                    });
+                }
+
+                // Lecturer conflict
+                const aLecturers = Array.isArray(a.lecturers) ? a.lecturers : (a.lecturers ? [a.lecturers] : []);
+                const bLecturers = Array.isArray(b.lecturers) ? b.lecturers : (b.lecturers ? [b.lecturers] : []);
+                const sharedLecturers = aLecturers.filter(l => bLecturers.includes(l));
+                sharedLecturers.forEach(lecturer => {
+                    conflicts.push({
+                        type: 'lecturer',
+                        day: a.day,
+                        time: a.time,
+                        lecturer,
+                        courses: [a.code, b.code],
+                        message: `Lecturer "${lecturer}" scheduled twice on ${a.day} at ${a.time} (${a.code} & ${b.code})`
+                    });
+                });
+
+                // Level conflict (same dept + level at same time)
+                if (a.department && b.department && a.department === b.department &&
+                    a.level && b.level && a.level === b.level) {
+                    conflicts.push({
+                        type: 'level',
+                        day: a.day,
+                        time: a.time,
+                        department: a.department,
+                        level: a.level,
+                        courses: [a.code, b.code],
+                        message: `${a.department} Level ${a.level} has overlapping classes on ${a.day} at ${a.time} (${a.code} & ${b.code})`
+                    });
+                }
+            }
+        }
+
+        res.json({ data: conflicts, total: conflicts.length });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // Start Server
 const server = app.listen(PORT, () => {

@@ -202,68 +202,71 @@ const StudentPortal = () => {
 
         return (
             <div className="flex flex-col items-center justify-center min-h-[70vh] px-4">
-                <div className="bg-white p-8 md:p-12 rounded-2xl shadow-xl w-full max-w-md text-center border border-slate-100">
-                    {/* MTU Logo */}
-                    <div className="flex justify-center mb-6">
-                        <div className="w-20 h-20 rounded-full bg-white shadow-lg p-2 border-2 border-slate-100">
-                            <img src={mtuLogo} alt="MTU Logo" className="w-full h-full object-contain rounded-full" />
+                {/* Hero card */}
+                <div className="w-full max-w-md">
+                    {/* Top gradient strip */}
+                    <div className="bg-gradient-to-r from-[#4c1d95] to-[#6d28d9] rounded-t-2xl px-8 pt-8 pb-10 text-white text-center relative overflow-hidden">
+                        <div className="absolute -top-6 -right-6 w-32 h-32 rounded-full bg-white/10" />
+                        <div className="absolute -bottom-4 -left-4 w-24 h-24 rounded-full bg-white/5" />
+                        <div className="relative">
+                            <div className="w-20 h-20 rounded-full bg-white shadow-lg p-2 mx-auto mb-4 border-2 border-white/20">
+                                <img src={mtuLogo} alt="MTU Logo" className="w-full h-full object-contain rounded-full" />
+                            </div>
+                            <h1 className="text-2xl font-bold tracking-tight">Student Timetable</h1>
+                            <p className="text-purple-200 text-sm mt-1">Mountain Top University</p>
                         </div>
                     </div>
 
-                    <h1 className="text-2xl font-bold text-slate-900 mb-2">MTU Timetable</h1>
-                    <p className="text-slate-500 text-sm mb-6">
-                        Access your personalized class schedule securely through the MTU Student Portal.
-                    </p>
-
-                    {error && (
-                        <div className="bg-red-50 border-l-4 border-red-500 text-red-700 text-sm rounded-r-lg px-4 py-3 mb-5 text-left">
-                            <div className="flex items-start gap-2">
-                                <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                <span>{error}</span>
-                            </div>
-                        </div>
-                    )}
-
-                    {loading ? (
-                        <div className="flex items-center justify-center gap-2 text-[#4c1d95] font-medium">
-                            <div className="w-4 h-4 border-2 border-purple-200 border-t-[#4c1d95] rounded-full animate-spin"></div>
-                            Loading your timetable...
-                        </div>
-                    ) : (
-                        <div className="bg-purple-50 border border-purple-100 rounded-xl p-5 text-sm">
-                            <div className="flex items-center gap-3 mb-3">
-                                <div className="w-10 h-10 bg-[#4c1d95] rounded-lg flex items-center justify-center">
-                                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    {/* Body */}
+                    <div className="bg-white rounded-b-2xl shadow-xl border border-slate-100 px-8 py-6 -mt-4">
+                        {error && (
+                            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3 mb-5">
+                                <div className="flex items-start gap-2">
+                                    <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                     </svg>
-                                </div>
-                                <div className="text-left">
-                                    <p className="font-semibold text-slate-800">How to Access</p>
-                                    <p className="text-slate-500">Two simple steps</p>
+                                    <span>{error}</span>
                                 </div>
                             </div>
-                            <ol className="text-left text-slate-600 space-y-2 ml-2">
-                                <li className="flex items-start gap-2">
-                                    <span className="w-5 h-5 bg-[#4c1d95] text-white rounded-full flex items-center justify-center text-xs flex-shrink-0 mt-0.5">1</span>
-                                    <span>Log in to the <strong>MTU Student Portal</strong></span>
-                                </li>
-                                <li className="flex items-start gap-2">
-                                    <span className="w-5 h-5 bg-[#4c1d95] text-white rounded-full flex items-center justify-center text-xs flex-shrink-0 mt-0.5">2</span>
-                                    <span>Click <strong>"View My Timetable"</strong> to access your schedule</span>
-                                </li>
-                            </ol>
-                        </div>
-                    )}
+                        )}
 
-                    <div className="mt-6 pt-6 border-t border-slate-100">
-                        <Link to="/" className="text-sm text-slate-400 hover:text-[#4c1d95] transition-colors inline-flex items-center gap-1">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                            </svg>
-                            Back to Main Menu
-                        </Link>
+                        {loading ? (
+                            <div className="flex flex-col items-center justify-center gap-3 py-6 text-center">
+                                <div className="w-10 h-10 border-3 border-purple-100 border-t-[#4c1d95] rounded-full animate-spin" style={{ borderWidth: 3 }}></div>
+                                <p className="text-slate-500 text-sm font-medium">Loading your timetable...</p>
+                            </div>
+                        ) : (
+                            <>
+                                <p className="text-slate-600 text-sm text-center mb-5">
+                                    Access your personalized class schedule securely through the MTU Student Portal.
+                                </p>
+                                <div className="space-y-3">
+                                    <div className="flex items-start gap-3 p-3 bg-purple-50 rounded-xl border border-purple-100">
+                                        <span className="w-6 h-6 bg-[#4c1d95] text-white rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">1</span>
+                                        <div>
+                                            <p className="text-sm font-semibold text-slate-800">Log in to the MTU Student Portal</p>
+                                            <p className="text-xs text-slate-500 mt-0.5">Use your student credentials</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-start gap-3 p-3 bg-emerald-50 rounded-xl border border-emerald-100">
+                                        <span className="w-6 h-6 bg-emerald-600 text-white rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
+                                        <div>
+                                            <p className="text-sm font-semibold text-slate-800">Click "View My Timetable"</p>
+                                            <p className="text-xs text-slate-500 mt-0.5">You'll be redirected here automatically</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+
+                        <div className="mt-6 pt-5 border-t border-slate-100 text-center">
+                            <Link to="/" className="text-sm text-slate-400 hover:text-[#4c1d95] transition-colors inline-flex items-center gap-1.5">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                                </svg>
+                                Back to Admin Portal
+                            </Link>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -286,31 +289,32 @@ const StudentPortal = () => {
     return (
         <div className="space-y-6">
             {/* Student Header Card */}
-            <div className="bg-gradient-to-r from-[#4c1d95] to-[#6d28d9] rounded-xl shadow-lg p-6 text-white">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div className="bg-gradient-to-r from-[#4c1d95] to-[#6d28d9] rounded-2xl shadow-lg p-6 sm:p-8 text-white overflow-hidden relative">
+                <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-white/10 pointer-events-none" />
+                <div className="absolute -bottom-10 -left-10 w-32 h-32 rounded-full bg-white/5 pointer-events-none" />
+                <div className="relative flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                     <div className="flex items-center gap-4">
-                        <div className="w-16 h-16 rounded-full bg-white/20 backdrop-blur flex items-center justify-center border-2 border-white/30">
-                            <span className="text-2xl font-bold">{student.name?.charAt(0) || 'S'}</span>
+                        <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center border border-white/30 shrink-0">
+                            <span className="text-2xl font-bold">{student.name?.charAt(0)?.toUpperCase() || 'S'}</span>
                         </div>
                         <div>
-                            <h1 className="text-2xl font-bold">Welcome, {student.name}</h1>
-                            <p className="text-purple-200 text-sm flex items-center gap-2 flex-wrap">
-                                <span className="bg-white/20 px-2 py-0.5 rounded text-xs">{student.department}</span>
-                                <span>•</span>
-                                <span className="bg-emerald-500/30 px-2 py-0.5 rounded text-xs">{student.level} Level</span>
-                                <span>•</span>
-                                <span className="text-purple-200/80">{student.matric_number}</span>
-                            </p>
+                            <p className="text-purple-200 text-xs font-medium uppercase tracking-wide mb-0.5">Student Portal</p>
+                            <h1 className="text-xl sm:text-2xl font-bold leading-tight">{student.name}</h1>
+                            <div className="flex items-center gap-2 flex-wrap mt-1.5">
+                                <span className="bg-white/20 px-2.5 py-0.5 rounded-full text-xs font-medium">{student.department}</span>
+                                <span className="bg-emerald-500/30 px-2.5 py-0.5 rounded-full text-xs font-medium">{student.level} Level</span>
+                                <span className="text-purple-200/80 text-xs">{student.matric_number}</span>
+                            </div>
                         </div>
                     </div>
-                    <button 
-                        onClick={handleLogout} 
-                        className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors border border-white/20 text-sm font-medium"
+                    <button
+                        onClick={handleLogout}
+                        className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors border border-white/20 text-sm font-medium shrink-0"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                         </svg>
-                        Logout
+                        Sign Out
                     </button>
                 </div>
             </div>

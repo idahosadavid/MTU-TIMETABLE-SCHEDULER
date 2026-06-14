@@ -31,6 +31,7 @@
     "dotenv": "^17.3.1",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.5.2",
     "nodemon": "^3.1.11",
     "pdfkit": "^0.17.2",
     "sqlite3": "^6.0.1"

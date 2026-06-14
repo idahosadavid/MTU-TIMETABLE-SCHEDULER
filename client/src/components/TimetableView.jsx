@@ -108,13 +108,50 @@ const TimetableView = () => {
 
     const fetchTimetable = async ({ silent = false } = {}) => {
         try {
-            const response = await fetch(`${API_BASE_URL}/timetables/${timetableId}`);
-            const data = await response.json();
+            const timetableRes = await fetch(`${API_BASE_URL}/timetables/${timetableId}`);
+            const data = await timetableRes.json();
+            
+            let assignedCourses = null;
+            try {
+                const assignedRes = await fetch(`${API_BASE_URL}/timetables/${timetableId}/courses`, { headers: adminHeaders() });
+                if (assignedRes.ok) {
+                    const assignedData = await assignedRes.json();
+                    assignedCourses = assignedData.data || [];
+                }
+            } catch (e) {
+                console.error('Failed to fetch assigned courses', e);
+            }
+
             if (data.data) {
+                let currentScheduled = data.data.data?.scheduled || [];
+                let currentUnscheduled = data.data.data?.unscheduled || [];
+
+                if (assignedCourses) {
+                    const assignedCodes = new Set(assignedCourses.map(c => c.code));
+                    
+                    // We do not remove courses here because AI-generated courses might not be in the manual assigned list.
+                    // currentScheduled = currentScheduled.filter(c => assignedCodes.has(c.code));
+                    // currentUnscheduled = currentUnscheduled.filter(c => assignedCodes.has(c.code));
+
+                    // Add courses that are assigned but missing from both lists
+                    const existingCodes = new Set([
+                        ...currentScheduled.map(c => c.code),
+                        ...currentUnscheduled.map(c => c.code)
+                    ]);
+                    const missingUnscheduled = assignedCourses.filter(c => !existingCodes.has(c.code));
+                    
+                    if (missingUnscheduled.length > 0) {
+                        currentUnscheduled = [
+                            ...currentUnscheduled, 
+                            ...missingUnscheduled.map(c => ({...c, day: undefined, time: undefined}))
+                        ];
+                    }
+                }
+
                 const nextSignature = JSON.stringify({
                     updated_at: data.data.updated_at,
-                    scheduled: data.data.data?.scheduled || [],
-                    unscheduled: data.data.data?.unscheduled || []
+                    scheduled: currentScheduled,
+                    unscheduled: currentUnscheduled
                 });
 
                 if (!silent && previousSignatureRef.current && previousSignatureRef.current !== nextSignature) {
@@ -127,8 +164,8 @@ const TimetableView = () => {
 
                 previousSignatureRef.current = nextSignature;
                 setTimetable(data.data);
-                setScheduled(data.data.data.scheduled || []);
-                setUnscheduled(data.data.data.unscheduled || []);
+                setScheduled(currentScheduled);
+                setUnscheduled(currentUnscheduled);
                 setLastCheckedAt(new Date());
             }
             setLoading(false);
@@ -227,7 +264,7 @@ const TimetableView = () => {
 
                 // Remove from old position if it was scheduled
                 if (source === 'scheduled') {
-                    newScheduled = newScheduled.filter(c => c.code !== course.code);
+                    newScheduled = newScheduled.filter(c => c.code !== course.code || c.day !== course.day || c.time !== course.time);
                 } else {
                     newUnscheduled = newUnscheduled.filter(c => c.code !== course.code);
                 }

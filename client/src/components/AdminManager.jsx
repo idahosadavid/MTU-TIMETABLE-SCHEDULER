@@ -13,6 +13,59 @@ const emptyForms = {
     course: { code: '', title: '', department: '', level: '', lecturers: [], units: '', semester: 'First', type: 'Lecture', is_compulsory: false, preferred_day: 'AUTO', preferred_time: 'AUTO', venue: '', duration: 1, timetable_id: '' }
 };
 
+const SectionCard = ({ title, children }) => (
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="bg-slate-50 border-b border-slate-200 px-6 py-4 flex items-center gap-3">
+            <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
+        </div>
+        <div className="p-6">{children}</div>
+    </div>
+);
+
+const DeleteButton = ({ onClick }) => (
+    <button 
+        onClick={onClick} 
+        className="text-red-600 hover:text-red-800 hover:bg-red-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+    >
+        Delete
+    </button>
+);
+
+const AddButton = ({ onClick, children }) => (
+    <button 
+        onClick={onClick} 
+        className="bg-[#4c1d95] hover:bg-[#3c1780] text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+    >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+        </svg>
+        {children}
+    </button>
+);
+
+const FormInput = ({ ...props }) => (
+    <input 
+        className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent text-sm w-full" 
+        {...props} 
+    />
+);
+
+const FormSelect = ({ children, ...props }) => (
+    <select 
+        className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent text-sm w-full" 
+        {...props}
+    >
+        {children}
+    </select>
+);
+
+const EmptyState = ({ icon, message }) => (
+    <div className="text-center py-8 text-slate-400 bg-slate-50 rounded-lg border border-slate-100">
+        <div className="text-3xl mb-2">{icon}</div>
+        <p className="text-sm">{message}</p>
+    </div>
+);
+
 const AdminManager = () => {
     const [colleges, setColleges] = useState([]);
     const [departments, setDepartments] = useState([]);
@@ -153,26 +206,30 @@ const AdminManager = () => {
         const url = editingCourseId ? `${API_BASE_URL}/courses/${editingCourseId}` : `${API_BASE_URL}/courses`;
         const method = editingCourseId ? 'PUT' : 'POST';
 
-        const response = await fetch(url, {
-            method,
-            headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-            body: JSON.stringify({
-                ...forms.course,
-                units: parseInt(forms.course.units),
-                level: parseInt(forms.course.level),
-                duration: parseFloat(forms.course.duration)
-            })
-        });
+        try {
+            const response = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                body: JSON.stringify({
+                    ...forms.course,
+                    units: parseInt(forms.course.units),
+                    level: parseInt(forms.course.level),
+                    duration: parseFloat(forms.course.duration)
+                })
+            });
 
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Request failed');
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Request failed');
+            }
+
+            setForms(prev => ({ ...prev, course: emptyForms.course }));
+            setEditingCourseId(null);
+            setNotice({ message: editingCourseId ? 'Course updated' : 'Course added', type: 'success' });
+            fetchAll();
+        } catch (err) {
+            setNotice({ message: err.message, type: 'error' });
         }
-
-        setForms(prev => ({ ...prev, course: emptyForms.course }));
-        setEditingCourseId(null);
-        setNotice({ message: editingCourseId ? 'Course updated' : 'Course added', type: 'success' });
-        fetchAll();
     };
 
     const editCourse = (course) => {
@@ -519,59 +576,6 @@ const AdminManager = () => {
     ];
 
     const [activeTab, setActiveTab] = useState('colleges');
-
-    const SectionCard = ({ title, children }) => (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="bg-slate-50 border-b border-slate-200 px-6 py-4 flex items-center gap-3">
-                <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
-            </div>
-            <div className="p-6">{children}</div>
-        </div>
-    );
-
-    const DeleteButton = ({ onClick }) => (
-        <button 
-            onClick={onClick} 
-            className="text-red-600 hover:text-red-800 hover:bg-red-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-        >
-            Delete
-        </button>
-    );
-
-    const AddButton = ({ onClick, children }) => (
-        <button 
-            onClick={onClick} 
-            className="bg-[#4c1d95] hover:bg-[#3c1780] text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-        >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
-            </svg>
-            {children}
-        </button>
-    );
-
-    const FormInput = ({ ...props }) => (
-        <input 
-            className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent text-sm w-full" 
-            {...props} 
-        />
-    );
-
-    const FormSelect = ({ children, ...props }) => (
-        <select 
-            className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent text-sm w-full" 
-            {...props}
-        >
-            {children}
-        </select>
-    );
-
-    const EmptyState = ({ icon, message }) => (
-        <div className="text-center py-8 text-slate-400 bg-slate-50 rounded-lg border border-slate-100">
-            <div className="text-3xl mb-2">{icon}</div>
-            <p className="text-sm">{message}</p>
-        </div>
-    );
 
     return (
         <div className="space-y-6">

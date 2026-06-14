@@ -982,16 +982,13 @@ app.post('/api/courses', requireAdmin, (req, res) => {
     const durationInMinutes = parseFloat(duration) * 60;
     const timetable_id = req.body.timetable_id;
 
-    if (!timetable_id) {
-        return res.status(400).json({ error: 'timetable_id is required' });
-    }
-    timetablesRepo.getRawById(timetable_id)
+    timetablesRepo.getRawById(timetable_id || null)
         .then((timetableRow) => {
-            if (!timetableRow) {
+            if (timetable_id && !timetableRow) {
                 throw new Error('Invalid timetable_id');
             }
 
-            const college = timetableRow.college || null;
+            const college = timetableRow ? timetableRow.college || null : null;
             return coursesRepo.create({
                 code,
                 title,
@@ -1523,17 +1520,6 @@ app.post('/api/timetables/validate', requireAdmin, (req, res) => {
     res.json({ valid: !conflict });
 });
 
-// Save Timetable
-app.post('/api/timetables/:type/save', requireAdmin, (req, res) => {
-    const { type } = req.params;
-    const { scheduled, unscheduled } = req.body;
-
-    const data = JSON.stringify({ scheduled, unscheduled });
-
-    timetablesRepo.createWithData({ type, data })
-        .then((result) => res.json({ message: 'Timetable saved successfully', id: result.lastID }))
-        .catch((err) => res.status(400).json({ error: err.message }));
-});
 
 // Save Timetable (Specific ID)
 app.post('/api/timetables/:id/save', requireAdmin, (req, res) => {
@@ -1656,7 +1642,8 @@ app.get('/api/timetables/:id/export', async (req, res) => {
 
         return res.status(400).json({ error: 'Unsupported format. Use excel, pdf, or word.' });
     } catch (err) {
-        return res.status(404).json({ error: 'Timetable not found' });
+        const status = err.status || 500;
+        return res.status(status).json({ error: err.message || 'Export failed' });
     }
 });
 

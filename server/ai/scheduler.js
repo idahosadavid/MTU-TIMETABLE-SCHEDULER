@@ -78,14 +78,14 @@ const getSharedSessionKey = (course) => {
 
 const hasConflict = (schedule, day, time, duration, course) => {
     const newStart = parseTime(time);
-    const newEnd = newStart + duration;
+    const newEnd = newStart + Number(duration);
     const courseSharedSessionKey = getSharedSessionKey(course);
 
     for (const item of schedule) {
         if (item.day !== day) continue;
 
         const itemStart = parseTime(item.time);
-        const itemEnd = itemStart + item.duration; // Assuming item has duration
+        const itemEnd = itemStart + Number(item.duration || 60);
 
         // Check time overlap
         if (newStart < itemEnd && newEnd > itemStart) {

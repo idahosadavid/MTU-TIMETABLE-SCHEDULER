@@ -84,6 +84,14 @@ const AdminManager = () => {
     const [courseFilterLevel, setCourseFilterLevel] = useState('');
     const [selectedTimetableForAssign, setSelectedTimetableForAssign] = useState('');
     const [selectedMasterCourseIds, setSelectedMasterCourseIds] = useState(new Set());
+    const [editingCollegeId, setEditingCollegeId] = useState(null);
+    const [editingCollegeData, setEditingCollegeData] = useState({});
+    const [editingDepartmentId, setEditingDepartmentId] = useState(null);
+    const [editingDepartmentData, setEditingDepartmentData] = useState({});
+    const [editingLecturerId, setEditingLecturerId] = useState(null);
+    const [editingLecturerData, setEditingLecturerData] = useState({});
+    const [editingVenueId, setEditingVenueId] = useState(null);
+    const [editingVenueData, setEditingVenueData] = useState({});
 
     const fetchAll = async () => {
         const [cRes, dRes, lRes, vRes, rRes, coRes, tRes, mRes] = await Promise.all([
@@ -184,6 +192,22 @@ const AdminManager = () => {
         }
         setNotice({ message: 'Deleted successfully.', type: 'success' });
         fetchAll();
+    };
+
+    const updateEntity = async (path, payload) => {
+        const response = await fetch(`${API_BASE_URL}${path}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+            const error = await response.json();
+            setNotice({ message: error.error || 'Update failed', type: 'error' });
+            return false;
+        }
+        setNotice({ message: 'Updated successfully.', type: 'success' });
+        fetchAll();
+        return true;
     };
 
     const handleCourseLecturerToggle = (lecturerName) => {
@@ -649,20 +673,36 @@ const AdminManager = () => {
                                     <tr className="border-b border-slate-200">
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Code</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Name</th>
-                                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-600 uppercase w-24">Action</th>
+                                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-600 uppercase w-36">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {colleges.map(c => (
                                         <tr key={c.id} className="hover:bg-slate-50">
                                             <td className="py-3 px-4">
-                                                <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-bold rounded">
-                                                    {c.code}
-                                                </span>
+                                                {editingCollegeId === c.id ? (
+                                                    <FormInput value={editingCollegeData.code} onChange={(e) => setEditingCollegeData(p => ({ ...p, code: e.target.value }))} />
+                                                ) : (
+                                                    <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-bold rounded">{c.code}</span>
+                                                )}
                                             </td>
-                                            <td className="py-3 px-4 text-slate-800 font-medium">{c.name}</td>
+                                            <td className="py-3 px-4 text-slate-800 font-medium">
+                                                {editingCollegeId === c.id ? (
+                                                    <FormInput value={editingCollegeData.name} onChange={(e) => setEditingCollegeData(p => ({ ...p, name: e.target.value }))} />
+                                                ) : c.name}
+                                            </td>
                                             <td className="py-3 px-4 text-right">
-                                                <DeleteButton onClick={() => deleteEntity(`/admin/colleges/${c.id}`)} />
+                                                {editingCollegeId === c.id ? (
+                                                    <div className="flex justify-end gap-2">
+                                                        <button onClick={async () => { const ok = await updateEntity(`/admin/colleges/${c.id}`, editingCollegeData); if (ok) setEditingCollegeId(null); }} className="bg-[#059669] hover:bg-[#047857] text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">Save</button>
+                                                        <button onClick={() => setEditingCollegeId(null)} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">Cancel</button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex justify-end gap-2">
+                                                        <button onClick={() => { setEditingCollegeId(c.id); setEditingCollegeData({ code: c.code, name: c.name }); }} className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">Edit</button>
+                                                        <DeleteButton onClick={() => deleteEntity(`/admin/colleges/${c.id}`)} />
+                                                    </div>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}
@@ -709,21 +749,44 @@ const AdminManager = () => {
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Code</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Department</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">College</th>
-                                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-600 uppercase w-24">Action</th>
+                                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-600 uppercase w-36">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {departments.map(d => (
                                         <tr key={d.id} className="hover:bg-slate-50">
                                             <td className="py-3 px-4">
-                                                <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs font-bold rounded">
-                                                    {d.code}
-                                                </span>
+                                                {editingDepartmentId === d.id ? (
+                                                    <FormInput value={editingDepartmentData.code} onChange={(e) => setEditingDepartmentData(p => ({ ...p, code: e.target.value }))} />
+                                                ) : (
+                                                    <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs font-bold rounded">{d.code}</span>
+                                                )}
                                             </td>
-                                            <td className="py-3 px-4 text-slate-800 font-medium">{d.name}</td>
-                                            <td className="py-3 px-4 text-slate-500 text-sm">{d.college_code}</td>
+                                            <td className="py-3 px-4 text-slate-800 font-medium">
+                                                {editingDepartmentId === d.id ? (
+                                                    <FormInput value={editingDepartmentData.name} onChange={(e) => setEditingDepartmentData(p => ({ ...p, name: e.target.value }))} />
+                                                ) : d.name}
+                                            </td>
+                                            <td className="py-3 px-4 text-slate-500 text-sm">
+                                                {editingDepartmentId === d.id ? (
+                                                    <FormSelect value={editingDepartmentData.college_code} onChange={(e) => setEditingDepartmentData(p => ({ ...p, college_code: e.target.value }))}>
+                                                        <option value="">Select College</option>
+                                                        {colleges.map(c => <option key={c.id} value={c.code}>{c.code} - {c.name}</option>)}
+                                                    </FormSelect>
+                                                ) : d.college_code}
+                                            </td>
                                             <td className="py-3 px-4 text-right">
-                                                <DeleteButton onClick={() => deleteEntity(`/admin/departments/${d.id}`)} />
+                                                {editingDepartmentId === d.id ? (
+                                                    <div className="flex justify-end gap-2">
+                                                        <button onClick={async () => { const ok = await updateEntity(`/admin/departments/${d.id}`, editingDepartmentData); if (ok) setEditingDepartmentId(null); }} className="bg-[#059669] hover:bg-[#047857] text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">Save</button>
+                                                        <button onClick={() => setEditingDepartmentId(null)} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">Cancel</button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex justify-end gap-2">
+                                                        <button onClick={() => { setEditingDepartmentId(d.id); setEditingDepartmentData({ code: d.code, name: d.name, college_code: d.college_code }); }} className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">Edit</button>
+                                                        <DeleteButton onClick={() => deleteEntity(`/admin/departments/${d.id}`)} />
+                                                    </div>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}
@@ -771,23 +834,44 @@ const AdminManager = () => {
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Name</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Email</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Department</th>
-                                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-600 uppercase w-24">Action</th>
+                                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-600 uppercase w-36">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {lecturers.map(l => (
                                         <tr key={l.id} className="hover:bg-slate-50">
-                                            <td className="py-3 px-4 text-slate-800 font-medium">{l.name}</td>
-                                            <td className="py-3 px-4 text-slate-500 text-sm">{l.email || '-'}</td>
+                                            <td className="py-3 px-4 text-slate-800 font-medium">
+                                                {editingLecturerId === l.id ? (
+                                                    <FormInput value={editingLecturerData.name} onChange={(e) => setEditingLecturerData(p => ({ ...p, name: e.target.value }))} />
+                                                ) : l.name}
+                                            </td>
+                                            <td className="py-3 px-4 text-slate-500 text-sm">
+                                                {editingLecturerId === l.id ? (
+                                                    <FormInput type="email" value={editingLecturerData.email} onChange={(e) => setEditingLecturerData(p => ({ ...p, email: e.target.value }))} />
+                                                ) : (l.email || '-')}
+                                            </td>
                                             <td className="py-3 px-4">
-                                                {l.department_code && (
-                                                    <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs rounded">
-                                                        {l.department_code}
-                                                    </span>
+                                                {editingLecturerId === l.id ? (
+                                                    <FormSelect value={editingLecturerData.department_code} onChange={(e) => setEditingLecturerData(p => ({ ...p, department_code: e.target.value }))}>
+                                                        <option value="">No Department</option>
+                                                        {departments.map(d => <option key={d.id} value={d.code}>{d.code} - {d.name}</option>)}
+                                                    </FormSelect>
+                                                ) : l.department_code && (
+                                                    <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs rounded">{l.department_code}</span>
                                                 )}
                                             </td>
                                             <td className="py-3 px-4 text-right">
-                                                <DeleteButton onClick={() => deleteEntity(`/admin/lecturers/${l.id}`)} />
+                                                {editingLecturerId === l.id ? (
+                                                    <div className="flex justify-end gap-2">
+                                                        <button onClick={async () => { const ok = await updateEntity(`/admin/lecturers/${l.id}`, editingLecturerData); if (ok) setEditingLecturerId(null); }} className="bg-[#059669] hover:bg-[#047857] text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">Save</button>
+                                                        <button onClick={() => setEditingLecturerId(null)} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">Cancel</button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex justify-end gap-2">
+                                                        <button onClick={() => { setEditingLecturerId(l.id); setEditingLecturerData({ name: l.name, email: l.email || '', department_code: l.department_code || '' }); }} className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">Edit</button>
+                                                        <DeleteButton onClick={() => deleteEntity(`/admin/lecturers/${l.id}`)} />
+                                                    </div>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}
@@ -836,23 +920,44 @@ const AdminManager = () => {
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Venue Name</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">College</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Capacity</th>
-                                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-600 uppercase w-24">Action</th>
+                                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-600 uppercase w-36">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {venues.map(v => (
                                         <tr key={v.id} className="hover:bg-slate-50">
-                                            <td className="py-3 px-4 text-slate-800 font-medium">{v.name}</td>
+                                            <td className="py-3 px-4 text-slate-800 font-medium">
+                                                {editingVenueId === v.id ? (
+                                                    <FormInput value={editingVenueData.name} onChange={(e) => setEditingVenueData(p => ({ ...p, name: e.target.value }))} />
+                                                ) : v.name}
+                                            </td>
                                             <td className="py-3 px-4 text-slate-500 text-sm">
-                                                {collegeMap[v.college_code] || v.college_code || 'General'}
+                                                {editingVenueId === v.id ? (
+                                                    <FormSelect value={editingVenueData.college_code} onChange={(e) => setEditingVenueData(p => ({ ...p, college_code: e.target.value }))}>
+                                                        <option value="">General</option>
+                                                        {colleges.map(c => <option key={c.id} value={c.code}>{c.code} - {c.name}</option>)}
+                                                    </FormSelect>
+                                                ) : (collegeMap[v.college_code] || v.college_code || 'General')}
                                             </td>
                                             <td className="py-3 px-4">
-                                                <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs rounded">
-                                                    {v.capacity} seats
-                                                </span>
+                                                {editingVenueId === v.id ? (
+                                                    <FormInput type="number" min="0" value={editingVenueData.capacity} onChange={(e) => setEditingVenueData(p => ({ ...p, capacity: e.target.value }))} />
+                                                ) : (
+                                                    <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs rounded">{v.capacity} seats</span>
+                                                )}
                                             </td>
                                             <td className="py-3 px-4 text-right">
-                                                <DeleteButton onClick={() => deleteEntity(`/admin/venues/${v.id}`)} />
+                                                {editingVenueId === v.id ? (
+                                                    <div className="flex justify-end gap-2">
+                                                        <button onClick={async () => { const ok = await updateEntity(`/admin/venues/${v.id}`, editingVenueData); if (ok) setEditingVenueId(null); }} className="bg-[#059669] hover:bg-[#047857] text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">Save</button>
+                                                        <button onClick={() => setEditingVenueId(null)} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">Cancel</button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex justify-end gap-2">
+                                                        <button onClick={() => { setEditingVenueId(v.id); setEditingVenueData({ name: v.name, college_code: v.college_code || '', capacity: v.capacity?.toString() || '' }); }} className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">Edit</button>
+                                                        <DeleteButton onClick={() => deleteEntity(`/admin/venues/${v.id}`)} />
+                                                    </div>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}

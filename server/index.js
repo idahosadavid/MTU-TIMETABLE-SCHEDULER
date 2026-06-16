@@ -21,7 +21,7 @@ const { createStudentSessionToken, verifyStudentSessionToken, DEFAULT_TTL_SECOND
 const { issuePortalAuthCode, consumePortalAuthCode } = require('./security/portalAuthCodeStore');
 const { provisionStudentFromPortal } = require('./services/portalStudentProvisioner');
 
-const { adminRepo, customFieldsRepo, coursesRepo, timetablesRepo, studentsRepo, timetableCoursesRepo, auditLogRepo } = repositories;
+const { adminRepo, customFieldsRepo, coursesRepo, timetablesRepo, studentsRepo, timetableCoursesRepo, auditLogRepo, courseCatalogRepo } = repositories;
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -930,6 +930,32 @@ app.put('/api/admin/rules/:id', requireAdmin, (req, res) => {
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
+// Course Catalog routes
+app.get('/api/course-catalog', (req, res) => {
+    const { department, level, semester, college } = req.query;
+    courseCatalogRepo.list({ department, level, semester: semester || undefined, college: college || undefined })
+        .then(data => res.json({ data }))
+        .catch(err => res.status(500).json({ error: err.message }));
+});
+
+app.post('/api/course-catalog', requireAdmin, (req, res) => {
+    courseCatalogRepo.create(req.body)
+        .then(result => res.json({ message: 'Course saved to catalog', id: result.lastID }))
+        .catch(err => res.status(400).json({ error: err.message }));
+});
+
+app.put('/api/course-catalog/:id', requireAdmin, (req, res) => {
+    courseCatalogRepo.update(req.params.id, req.body)
+        .then(() => res.json({ message: 'Catalog course updated' }))
+        .catch(err => res.status(400).json({ error: err.message }));
+});
+
+app.delete('/api/course-catalog/:id', requireAdmin, (req, res) => {
+    courseCatalogRepo.remove(req.params.id)
+        .then(() => res.json({ message: 'Catalog course deleted' }))
+        .catch(err => res.status(400).json({ error: err.message }));
+});
+
 app.get('/api/options', (req, res) => {
     adminRepo.getOptions()
         .then(data => res.json({
@@ -1465,97 +1491,11 @@ const handleGenerate = async (req, res, generateFn, type) => {
 
         await timetablesRepo.updateGeneratedDataById(timetable_id, finalData);
 
-        const derivedTimetables = [];
-        if (scope === 'college') {
-            const normalizeText = (value) => String(value || '').trim();
-            const allGeneratedCourses = [...generatedData.scheduled, ...generatedData.unscheduled];
-            const departmentsInRun = Array.from(new Set(
-                allGeneratedCourses
-                    .map((course) => normalizeText(course.department))
-                    .filter(Boolean)
-            ));
-
-            const existingTimetables = await timetablesRepo.list({ college: timetableRow.college });
-
-            const upsertDerivedTimetable = async (name, dataObject) => {
-                const matching = (existingTimetables || []).find((item) =>
-                    item.type === type
-                    && item.name === name
-                    && item.college === timetableRow.college
-                    && item.academic_session === timetableRow.academic_session
-                    && item.semester === timetableRow.semester
-                );
-
-                const payload = JSON.stringify(dataObject);
-                if (matching) {
-                    await timetablesRepo.updateGeneratedDataById(matching.id, payload);
-                    derivedTimetables.push({ id: matching.id, name, mode: 'updated' });
-                    return;
-                }
-
-                const created = await timetablesRepo.createWithData({
-                    type,
-                    name,
-                    academic_session: timetableRow.academic_session,
-                    semester: timetableRow.semester,
-                    college: timetableRow.college,
-                    status: 'Draft',
-                    data: payload
-                });
-
-                const newId = created?.lastID || created?.id || null;
-                if (newId != null) {
-                    existingTimetables.push({
-                        id: newId,
-                        type,
-                        name,
-                        academic_session: timetableRow.academic_session,
-                        semester: timetableRow.semester,
-                        college: timetableRow.college
-                    });
-                }
-                derivedTimetables.push({ id: newId, name, mode: 'created' });
-            };
-
-            for (const departmentName of departmentsInRun) {
-                const departmentScheduled = generatedData.scheduled.filter(
-                    (course) => normalizeText(course.department) === departmentName
-                );
-                const departmentUnscheduled = generatedData.unscheduled.filter(
-                    (course) => normalizeText(course.department) === departmentName
-                );
-
-                const departmentData = { scheduled: departmentScheduled, unscheduled: departmentUnscheduled };
-                const departmentTimetableName = `${timetableRow.name || `${type} Timetable`} - ${departmentName}`;
-                await upsertDerivedTimetable(departmentTimetableName, departmentData);
-
-                const levelsInDepartment = Array.from(new Set(
-                    [...departmentScheduled, ...departmentUnscheduled]
-                        .map((course) => normalizeText(course.level))
-                        .filter(Boolean)
-                )).sort((a, b) => Number(a) - Number(b));
-
-                for (const levelValue of levelsInDepartment) {
-                    const levelScheduled = departmentScheduled.filter(
-                        (course) => normalizeText(course.level) === levelValue
-                    );
-                    const levelUnscheduled = departmentUnscheduled.filter(
-                        (course) => normalizeText(course.level) === levelValue
-                    );
-
-                    const levelData = { scheduled: levelScheduled, unscheduled: levelUnscheduled };
-                    const levelTimetableName = `${timetableRow.name || `${type} Timetable`} - ${departmentName} - Level ${levelValue}`;
-                    await upsertDerivedTimetable(levelTimetableName, levelData);
-                }
-            }
-        }
-
         writeAuditLog('GENERATE', 'timetable', timetable_id, `type=${type} scope=${scope} dept=${department || 'all'}`, req.ip);
         res.json({
             message: `${type} timetable generated`,
             id: timetable_id,
-            data: generatedData,
-            derived_timetables: derivedTimetables
+            data: generatedData
         });
     } catch (err) {
         res.status(500).json({ error: err.message });

@@ -24,6 +24,11 @@ const Dashboard = ({ timetableId }) => {
         shared_session_key: '',
         custom_data: {}
     });
+    // Course Catalog modal state
+    const [showCatalog, setShowCatalog] = useState(false);
+    const [catalogCourses, setCatalogCourses] = useState([]);
+    const [catalogSelected, setCatalogSelected] = useState([]);
+    const [catalogFilter, setCatalogFilter] = useState({ department: '', level: '', semester: '' });
 
     // College selection for the Add Course form (independent of generation scope)
     const [courseCollege, setCourseCollege] = useState('');
@@ -145,6 +150,22 @@ const Dashboard = ({ timetableId }) => {
             });
 
             if (response.ok) {
+                try {
+                    await fetch(`${API_BASE_URL}/course-catalog`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                        body: JSON.stringify({
+                            ...course,
+                            college: courseCollege || '',
+                            lecturers: course.lecturers,
+                            units: parseInt(course.units),
+                            level: parseInt(course.level),
+                            duration: parseFloat(course.duration),
+                            is_compulsory: course.is_compulsory,
+                            custom_data: course.custom_data
+                        })
+                    });
+                } catch { /* non-fatal */ }
                 setNotice({ message: 'Course added successfully.', type: 'success' });
                 // Reset form
                 setCourse({
@@ -215,6 +236,46 @@ const Dashboard = ({ timetableId }) => {
         setLoading(false);
     };
 
+    const openCatalog = async () => {
+        try {
+            const params = new URLSearchParams();
+            if (catalogFilter.department) params.set('department', catalogFilter.department);
+            if (catalogFilter.level) params.set('level', catalogFilter.level);
+            if (catalogFilter.semester) params.set('semester', catalogFilter.semester);
+            const res = await fetch(`${API_BASE_URL}/course-catalog?${params}`);
+            const data = await res.json();
+            setCatalogCourses(data.data || []);
+            setCatalogSelected([]);
+            setShowCatalog(true);
+        } catch {
+            setNotice({ message: 'Failed to load catalog.', type: 'error' });
+        }
+    };
+
+    const handleCatalogImport = async () => {
+        if (!timetableId) {
+            setNotice({ message: 'No timetable selected.', type: 'error' });
+            return;
+        }
+        if (catalogSelected.length === 0) {
+            setNotice({ message: 'No courses selected.', type: 'error' });
+            return;
+        }
+        let successCount = 0;
+        for (const entry of catalogSelected) {
+            try {
+                const res = await fetch(`${API_BASE_URL}/courses`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                    body: JSON.stringify({ ...entry, timetable_id: timetableId, id: undefined })
+                });
+                if (res.ok) successCount++;
+            } catch { /* skip */ }
+        }
+        setShowCatalog(false);
+        setNotice({ message: `Imported ${successCount} course(s) from catalog.`, type: 'success' });
+    };
+
     return (
         <div className="p-6 bg-white rounded-lg shadow-md">
             <FloatingNotice
@@ -223,9 +284,85 @@ const Dashboard = ({ timetableId }) => {
                 onDismiss={() => setNotice({ message: '', type: 'info' })}
                 stackIndex={0}
             />
+            {showCatalog && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl mx-4 p-6 max-h-[85vh] flex flex-col">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-xl font-bold">Import from Course Catalog</h3>
+                            <button onClick={() => setShowCatalog(false)} className="text-gray-500 hover:text-gray-800 text-2xl leading-none">&times;</button>
+                        </div>
+                        <div className="flex gap-2 mb-4 flex-wrap">
+                            <select value={catalogFilter.department} onChange={e => setCatalogFilter(f => ({ ...f, department: e.target.value }))} className="border p-2 rounded text-sm flex-1">
+                                <option value="">All Departments</option>
+                                {options.departments.map(d => <option key={d.code} value={d.code}>{d.code} — {d.name}</option>)}
+                            </select>
+                            <select value={catalogFilter.level} onChange={e => setCatalogFilter(f => ({ ...f, level: e.target.value }))} className="border p-2 rounded text-sm">
+                                <option value="">All Levels</option>
+                                {['100','200','300','400','500'].map(l => <option key={l} value={l}>{l}</option>)}
+                            </select>
+                            <select value={catalogFilter.semester} onChange={e => setCatalogFilter(f => ({ ...f, semester: e.target.value }))} className="border p-2 rounded text-sm">
+                                <option value="">Both Semesters</option>
+                                <option value="First">First</option>
+                                <option value="Second">Second</option>
+                            </select>
+                            <button onClick={openCatalog} className="bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700">Filter</button>
+                        </div>
+                        <div className="overflow-y-auto flex-1 border rounded">
+                            {catalogCourses.length === 0 ? (
+                                <p className="text-gray-500 text-sm p-4">No courses in catalog. Add courses and tick "Save to Catalog" to build it up.</p>
+                            ) : (
+                                <table className="w-full text-sm">
+                                    <thead className="bg-gray-100 sticky top-0">
+                                        <tr>
+                                            <th className="p-2 text-left w-8">
+                                                <input type="checkbox" checked={catalogSelected.length === catalogCourses.length && catalogCourses.length > 0}
+                                                    onChange={e => setCatalogSelected(e.target.checked ? [...catalogCourses] : [])} />
+                                            </th>
+                                            <th className="p-2 text-left">Code</th>
+                                            <th className="p-2 text-left">Title</th>
+                                            <th className="p-2 text-left">Dept</th>
+                                            <th className="p-2 text-left">Level</th>
+                                            <th className="p-2 text-left">Sem</th>
+                                            <th className="p-2 text-left">Units</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {catalogCourses.map(c => {
+                                            const checked = catalogSelected.some(s => s.id === c.id);
+                                            return (
+                                                <tr key={c.id} className={`border-t cursor-pointer hover:bg-blue-50 ${checked ? 'bg-blue-50' : ''}`}
+                                                    onClick={() => setCatalogSelected(prev => checked ? prev.filter(s => s.id !== c.id) : [...prev, c])}>
+                                                    <td className="p-2"><input type="checkbox" checked={checked} readOnly /></td>
+                                                    <td className="p-2 font-mono">{c.code}</td>
+                                                    <td className="p-2">{c.title}</td>
+                                                    <td className="p-2">{c.department}</td>
+                                                    <td className="p-2">{c.level}</td>
+                                                    <td className="p-2">{c.semester}</td>
+                                                    <td className="p-2">{c.units}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            )}
+                        </div>
+                        <div className="flex justify-between items-center mt-4">
+                            <span className="text-sm text-gray-500">{catalogSelected.length} selected</span>
+                            <div className="flex gap-2">
+                                <button onClick={() => setShowCatalog(false)} className="border px-4 py-2 rounded text-sm hover:bg-gray-100">Cancel</button>
+                                <button onClick={handleCatalogImport} disabled={catalogSelected.length === 0} className={`bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 ${catalogSelected.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                    Import {catalogSelected.length > 0 ? `(${catalogSelected.length})` : ''}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <div className="flex justify-between items-center mb-4">
                 <h2 className="text-2xl font-bold">Course Management</h2>
-                <div className="space-x-2">
+                <div className="flex flex-wrap gap-2">
+                    <button onClick={openCatalog} className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700">Import from Catalog</button>
                     <button onClick={() => handleGenerate('lecture')} disabled={loading} className={`bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}>Generate Lectures</button>
                     <button onClick={() => handleGenerate('exam')} disabled={loading} className={`bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}>Generate Exams</button>
                     <button onClick={() => handleGenerate('test')} disabled={loading} className={`bg-orange-600 text-white px-4 py-2 rounded hover:bg-orange-700 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}>Generate Tests</button>

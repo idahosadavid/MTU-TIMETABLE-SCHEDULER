@@ -6,7 +6,8 @@ const sqliteRepos = {
     adminRepo: require('./sqlite/adminRepo'),
     studentsRepo: require('./sqlite/studentsRepo'),
     customFieldsRepo: require('./sqlite/customFieldsRepo'),
-    timetableCoursesRepo: require('./sqlite/timetableCoursesRepo')
+    timetableCoursesRepo: require('./sqlite/timetableCoursesRepo'),
+    auditLogRepo: require('./sqlite/auditLogRepo')
 };
 
 const supabaseRepos = {
@@ -15,7 +16,8 @@ const supabaseRepos = {
     adminRepo: require('./supabase/adminRepo'),
     studentsRepo: require('./supabase/studentsRepo'),
     customFieldsRepo: require('./supabase/customFieldsRepo'),
-    timetableCoursesRepo: require('./supabase/timetableCoursesRepo')
+    timetableCoursesRepo: require('./supabase/timetableCoursesRepo'),
+    auditLogRepo: require('./supabase/auditLogRepo')
 };
 
 const repositories = DB_PROVIDER === 'supabase' ? supabaseRepos : sqliteRepos;

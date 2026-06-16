@@ -123,6 +123,18 @@ create index if not exists idx_student_results_lookup on public.student_results 
 create index if not exists idx_departments_college_code on public.departments (college_code);
 create index if not exists idx_venues_college_code on public.venues (college_code);
 
+create table if not exists public.audit_log (
+    id bigint generated always as identity primary key,
+    action text not null,
+    entity_type text not null,
+    entity_id text not null,
+    detail text,
+    ip_address text,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists idx_audit_log_created_at on public.audit_log (created_at desc);
+
 insert into public.colleges (code, name)
 values
     ('CBAS', 'College of Basic and Applied Sciences'),

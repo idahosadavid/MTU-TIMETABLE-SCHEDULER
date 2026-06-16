@@ -21,7 +21,7 @@ const { createStudentSessionToken, verifyStudentSessionToken, DEFAULT_TTL_SECOND
 const { issuePortalAuthCode, consumePortalAuthCode } = require('./security/portalAuthCodeStore');
 const { provisionStudentFromPortal } = require('./services/portalStudentProvisioner');
 
-const { adminRepo, customFieldsRepo, coursesRepo, timetablesRepo, studentsRepo, timetableCoursesRepo } = repositories;
+const { adminRepo, customFieldsRepo, coursesRepo, timetablesRepo, studentsRepo, timetableCoursesRepo, auditLogRepo } = repositories;
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -1710,28 +1710,18 @@ app.get('/api/timetables/:id/export', async (req, res) => {
 // --- Audit Log ---
 
 const writeAuditLog = (action, entity_type, entity_id, detail, ip_address) => {
-    if (DB_PROVIDER !== 'sqlite' || !rawDb) return;
-    rawDb.run(
-        `INSERT INTO audit_log (action, entity_type, entity_id, detail, ip_address) VALUES (?, ?, ?, ?, ?)`,
-        [action, entity_type, String(entity_id ?? ''), detail ?? null, ip_address ?? null],
-        (err) => { if (err) console.error('[AuditLog] write error:', err.message); }
-    );
+    auditLogRepo.write({ action, entity_type, entity_id, detail, ip_address });
 };
 
-app.get('/api/admin/audit-log', requireAdmin, (req, res) => {
-    if (DB_PROVIDER !== 'sqlite' || !rawDb) {
-        return res.json({ data: [], note: 'Audit log is only available with the SQLite provider.' });
+app.get('/api/admin/audit-log', requireAdmin, async (req, res) => {
+    try {
+        const limit = Math.min(Number(req.query.limit) || 100, 500);
+        const offset = Number(req.query.offset) || 0;
+        const rows = await auditLogRepo.list({ limit, offset });
+        res.json({ data: rows });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-    const limit = Math.min(Number(req.query.limit) || 100, 500);
-    const offset = Number(req.query.offset) || 0;
-    rawDb.all(
-        `SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-        [limit, offset],
-        (err, rows) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ data: rows || [] });
-        }
-    );
 });
 
 // --- Conflict Detection ---

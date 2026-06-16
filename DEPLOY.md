@@ -1,8 +1,8 @@
-# Deployment Guide: Vercel + Fly.io + Supabase
+# Deployment Guide: Vercel + Render + Supabase
 
 ## Architecture
 - **Frontend**: Vercel (free tier)
-- **Backend**: Fly.io (free tier - 3 VMs, stays running)
+- **Backend**: Render (free tier - web service)
 - **Database**: Supabase (free tier - 500MB)
 
 ---
@@ -33,42 +33,33 @@ npm run import:sqlite-to-supabase
 
 ---
 
-## Step 3: Deploy Backend to Fly.io
+## Step 3: Deploy Backend to Render
 
-### Install Fly CLI
-```bash
-# Windows (PowerShell)
-iwr https://fly.io/install.ps1 -useb | iex
+1. Go to [render.com](https://render.com) and create an account
+2. Click **New → Web Service**
+3. Connect your GitHub repo and select the repository
+4. Configure the service:
+   - **Root Directory**: `server`
+   - **Build Command**: `npm install`
+   - **Start Command**: `node index.js` (or your entry point)
+   - **Instance Type**: Free
 
-# Or download from https://fly.io/docs/hands-on/install-flyctl/
-```
+### Set Environment Variables
+In the Render dashboard under **Environment**, add:
 
-### Deploy
-```bash
-cd server
+| Key | Value |
+|-----|-------|
+| `SUPABASE_URL` | your Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | your service role key |
+| `ADMIN_API_KEY` | your strong admin key |
+| `MTU_STUDENT_AUTH_MODE` | `portal-token` |
+| `MTU_PORTAL_SHARED_SECRET` | your portal shared secret |
+| `MTU_PORTAL_SESSION_SECRET` | your session secret |
+| `MTU_PORTAL_CODE_TTL_SECONDS` | `120` |
+| `MTU_PORTAL_API_URL` | `https://studentportal.mtu.edu.ng/api/v1` |
+| `MTU_PORTAL_API_KEY` | your portal API key |
 
-# Login to Fly.io
-fly auth login
-
-# Create the app (only first time)
-fly launch --no-deploy
-
-# Set environment secrets
-fly secrets set SUPABASE_URL="your_supabase_url"
-fly secrets set SUPABASE_SERVICE_ROLE_KEY="your_service_role_key"
-fly secrets set ADMIN_API_KEY="your_strong_admin_key"
-fly secrets set MTU_STUDENT_AUTH_MODE="portal-token"
-fly secrets set MTU_PORTAL_SHARED_SECRET="your_portal_secret"
-fly secrets set MTU_PORTAL_SESSION_SECRET="your_session_secret"
-fly secrets set MTU_PORTAL_CODE_TTL_SECONDS="120"
-fly secrets set MTU_PORTAL_API_URL="https://studentportal.mtu.edu.ng/api/v1"
-fly secrets set MTU_PORTAL_API_KEY="your_portal_api_key"
-
-# Deploy
-fly deploy
-```
-
-Your API will be at: `https://mtu-timetable-api.fly.dev`
+Your API will be at: `https://<your-service-name>.onrender.com`
 
 ---
 
@@ -84,7 +75,7 @@ npm i -g vercel
 cd client
 
 # Create .env.production
-VITE_API_BASE_URL=https://mtu-timetable-api.fly.dev/api
+VITE_API_BASE_URL=https://<your-service-name>.onrender.com/api
 
 # Deploy
 vercel --prod
@@ -94,14 +85,14 @@ Or use the Vercel Dashboard:
 1. Import your GitHub repo
 2. Set framework preset to "Vite"
 3. Set root directory to `client`
-4. Add environment variable: `VITE_API_BASE_URL=https://mtu-timetable-api.fly.dev/api`
+4. Add environment variable: `VITE_API_BASE_URL=https://<your-service-name>.onrender.com/api`
 5. Deploy
 
 ---
 
 ## Environment Variables Reference
 
-### Backend (Fly.io Secrets)
+### Backend (Render Environment)
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `SUPABASE_URL` | ✅ | Your Supabase project URL |
@@ -122,10 +113,10 @@ Or use the Vercel Dashboard:
 
 ## Free Tier Limits
 
-### Fly.io
-- 3 shared-cpu-1x VMs (256MB RAM each) → **512MB for your app**
-- 3GB persistent volumes
-- 160GB outbound data transfer
+### Render
+- 1 free web service (512MB RAM)
+- Spins down after 15 minutes of inactivity (cold starts ~30s)
+- 750 hours/month
 
 ### Vercel
 - Unlimited static site hosting
@@ -143,8 +134,8 @@ Or use the Vercel Dashboard:
 ## Troubleshooting
 
 ### Backend not connecting to Supabase
-Check logs: `fly logs`
-Verify secrets: `fly secrets list`
+Check logs in the Render dashboard under **Logs**
+Verify environment variables are set correctly
 
 ### Frontend API calls failing
 Check CORS is configured in backend
@@ -159,10 +150,8 @@ Check `SUPABASE_SERVICE_ROLE_KEY` has full permissions
 ## Updates & Redeploys
 
 ### Backend
-```bash
-cd server
-fly deploy
-```
+Push to your connected GitHub branch — Render auto-deploys on push.
+Or trigger a manual deploy from the Render dashboard.
 
 ### Frontend
 ```bash

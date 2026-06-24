@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getAdminKey } from '../adminAuth';
+import API_BASE_URL from '../apiBase';
 
 const ACTION_COLORS = {
     CREATE: 'bg-emerald-100 text-emerald-800',
@@ -8,7 +9,8 @@ const ACTION_COLORS = {
     GENERATE: 'bg-purple-100 text-purple-800',
 };
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+// apiBase.js already includes /api — strip it so we can append our own path segments
+const API_BASE = API_BASE_URL.replace(/\/api\/?$/, '');
 
 export default function AuditLog() {
     const [logs, setLogs] = useState([]);
@@ -20,14 +22,27 @@ export default function AuditLog() {
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch(`${API_BASE}/api/admin/audit-log?limit=200`, {
-                headers: { 'x-admin-key': getAdminKey() }
-            });
+            // 70 s timeout to survive Render free-tier cold starts (spin-up can take ~50 s)
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 70_000);
+            let res;
+            try {
+                res = await fetch(`${API_BASE}/api/admin/audit-log?limit=200`, {
+                    headers: { 'x-admin-key': getAdminKey() },
+                    signal: controller.signal,
+                });
+            } finally {
+                clearTimeout(timer);
+            }
             const json = await res.json();
-            if (!res.ok) throw new Error(json.error || 'Failed to load audit log');
+            if (!res.ok) throw new Error(json.error || `Server error ${res.status}`);
             setLogs(json.data || []);
         } catch (err) {
-            setError(err.message);
+            if (err.name === 'AbortError') {
+                setError('Request timed out — the server may be waking up. Please try again in a moment.');
+            } else {
+                setError(err.message || 'Network error — could not reach the server.');
+            }
         } finally {
             setLoading(false);
         }

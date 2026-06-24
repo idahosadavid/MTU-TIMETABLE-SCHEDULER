@@ -33,6 +33,7 @@ const Dashboard = ({ timetableId }) => {
     // College selection for the Add Course form (independent of generation scope)
     const [courseCollege, setCourseCollege] = useState('');
 
+    const [lecturerText, setLecturerText] = useState('');
     const [customFields, setCustomFields] = useState([]);
     const [loading, setLoading] = useState(false);
     const [options, setOptions] = useState({ colleges: [], departments: [], lecturers: [], venues: [] });
@@ -167,6 +168,7 @@ const Dashboard = ({ timetableId }) => {
                     });
                 } catch { /* non-fatal */ }
                 setNotice({ message: 'Course added successfully.', type: 'success' });
+                setLecturerText('');
                 // Reset form
                 setCourse({
                     code: '',
@@ -464,9 +466,10 @@ const Dashboard = ({ timetableId }) => {
                     ) : (
                         <input
                             name="lecturers"
-                            value={course.lecturers.join(', ')}
+                            value={lecturerText}
                             placeholder="Lecturers (comma separated)"
-                            onChange={(e) => setCourse(prev => ({ ...prev, lecturers: e.target.value.split(',').map(l => l.trim()).filter(Boolean) }))}
+                            onChange={(e) => setLecturerText(e.target.value)}
+                            onBlur={(e) => setCourse(prev => ({ ...prev, lecturers: e.target.value.split(',').map(l => l.trim()).filter(Boolean) }))}
                             className="border p-2 rounded"
                         />
                     )}

@@ -24,6 +24,7 @@ const { provisionStudentFromPortal } = require('./services/portalStudentProvisio
 const { adminRepo, customFieldsRepo, coursesRepo, timetablesRepo, studentsRepo, timetableCoursesRepo, auditLogRepo, courseCatalogRepo } = repositories;
 
 const app = express();
+app.set('trust proxy', 1); // trust Render/reverse-proxy X-Forwarded-For
 const PORT = process.env.PORT || 5000;
 const STUDENT_AUTH_MODE = process.env.MTU_STUDENT_AUTH_MODE || 'legacy';
 const MTU_PORTAL_SHARED_SECRET = process.env.MTU_PORTAL_SHARED_SECRET || '';
@@ -1167,6 +1168,7 @@ app.get('/api/courses', (req, res) => {
             res.json({ data: courses });
         })
         .catch((err) => {
+            console.error('[GET /api/courses] error:', err.message);
             res.status(400).json({ error: err.message });
         });
 });

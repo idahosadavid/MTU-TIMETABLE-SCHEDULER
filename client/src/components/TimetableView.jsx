@@ -131,7 +131,7 @@ const TimetableView = () => {
                 let currentScheduled = data.data.data?.scheduled || [];
                 let currentUnscheduled = data.data.data?.unscheduled || [];
 
-                if (assignedCourses && !hasInitiallyLoadedRef.current) {
+                if (assignedCourses && !hasInitiallyLoadedRef.current && !data.data.data?.cleared_unscheduled) {
                     // Only inject missing assigned courses on the very first load.
                     // On subsequent polls we trust the server state so that user actions
                     // like "clear unscheduled" are not reversed by the polling loop.

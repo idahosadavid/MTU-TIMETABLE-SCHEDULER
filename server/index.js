@@ -1557,10 +1557,10 @@ app.post('/api/timetables/:id/clear-unscheduled', requireAdmin, async (req, res)
         const scheduledIds = new Set(scheduled.map(c => c.id).filter(Boolean));
         const toUnassign = unscheduled.map(c => c.id).filter(id => id && !scheduledIds.has(id));
 
-        await timetablesRepo.updateDataById(id, JSON.stringify({ scheduled, unscheduled: [] }));
-        if (toUnassign.length > 0) {
-            await timetableCoursesRepo.removeCourses(id, toUnassign);
-        }
+        // cleared_unscheduled flag tells the frontend injection logic not to re-add
+        // these courses on reload. Generating a new schedule produces fresh data without
+        // this flag, so newly unschedulable courses will appear again after regeneration.
+        await timetablesRepo.updateDataById(id, JSON.stringify({ scheduled, unscheduled: [], cleared_unscheduled: true }));
 
         res.json({ message: 'Unscheduled courses cleared' });
     } catch (err) {

@@ -302,10 +302,14 @@ const TimetableView = () => {
         try {
             // Use dedicated endpoint to ensure we don't accidentally wipe scheduled courses
             suppressNextNotificationRef.current = true;
-            await fetch(`${API_BASE_URL}/timetables/${timetableId}/clear-unscheduled`, {
+            const res = await fetch(`${API_BASE_URL}/timetables/${timetableId}/clear-unscheduled`, {
                 method: 'POST',
                 headers: adminHeaders()
             });
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.error || 'Server error');
+            }
             setActionNotice({ message: 'Unscheduled list cleared.', type: 'success' });
         } catch (err) {
             console.error('Error clearing unscheduled:', err);

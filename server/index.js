@@ -1544,13 +1544,13 @@ app.post('/api/timetables/:id/save', requireAdmin, (req, res) => {
 app.post('/api/timetables/:id/clear-unscheduled', requireAdmin, (req, res) => {
     const { id } = req.params;
 
-    timetablesRepo.getRawById(id)
+    timetablesRepo.getById(id)
         .then((row) => {
             if (!row) {
                 throw new Error('Timetable not found');
             }
 
-            const currentData = JSON.parse(row.data);
+            const currentData = row.data;
             const scheduled = Array.isArray(currentData) ? currentData : (currentData.scheduled || []);
             const newData = JSON.stringify({ scheduled, unscheduled: [] });
 

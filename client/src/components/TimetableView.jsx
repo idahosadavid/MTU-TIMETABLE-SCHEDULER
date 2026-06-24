@@ -108,6 +108,7 @@ const TimetableView = () => {
     const [showConflicts, setShowConflicts] = useState(false);
     const previousSignatureRef = useRef('');
     const suppressNextNotificationRef = useRef(false);
+    const hasInitiallyLoadedRef = useRef(false);
 
     const fetchTimetable = async ({ silent = false } = {}) => {
         try {
@@ -129,23 +130,19 @@ const TimetableView = () => {
                 let currentScheduled = data.data.data?.scheduled || [];
                 let currentUnscheduled = data.data.data?.unscheduled || [];
 
-                if (assignedCourses) {
-                    const assignedCodes = new Set(assignedCourses.map(c => c.code));
-                    
-                    // We do not remove courses here because AI-generated courses might not be in the manual assigned list.
-                    // currentScheduled = currentScheduled.filter(c => assignedCodes.has(c.code));
-                    // currentUnscheduled = currentUnscheduled.filter(c => assignedCodes.has(c.code));
-
-                    // Add courses that are assigned but missing from both lists
+                if (assignedCourses && !hasInitiallyLoadedRef.current) {
+                    // Only inject missing assigned courses on the very first load.
+                    // On subsequent polls we trust the server state so that user actions
+                    // like "clear unscheduled" are not reversed by the polling loop.
                     const existingCodes = new Set([
                         ...currentScheduled.map(c => c.code),
                         ...currentUnscheduled.map(c => c.code)
                     ]);
                     const missingUnscheduled = assignedCourses.filter(c => !existingCodes.has(c.code));
-                    
+
                     if (missingUnscheduled.length > 0) {
                         currentUnscheduled = [
-                            ...currentUnscheduled, 
+                            ...currentUnscheduled,
                             ...missingUnscheduled.map(c => ({...c, day: undefined, time: undefined}))
                         ];
                     }
@@ -170,6 +167,7 @@ const TimetableView = () => {
                 setScheduled(currentScheduled);
                 setUnscheduled(currentUnscheduled);
                 setLastCheckedAt(new Date());
+                hasInitiallyLoadedRef.current = true;
             }
             setLoading(false);
         } catch (err) {

@@ -167,11 +167,11 @@ const tryRearrangeForCourse = (schedule, course, options) => {
 // 1. Lecture Scheduler
 const generateLectureSchedule = async (courses, options = {}) => {
     console.log("Generating Lecture Schedule...");
-    const lectures = courses.filter(c => c.type === 'Lecture');
+    const lectures = courses.filter(c => !c.type || c.type === 'Lecture');
     const filteredLectures = lectures.filter(c => {
         if (!matchesDepartmentFilter(c.department, options)) return false;
         if (options.level && Number(c.level) !== Number(options.level)) return false;
-        if (options.semester && c.semester !== options.semester) return false;
+        if (options.semester && c.semester && c.semester !== options.semester) return false;
         if (options.college && c.college && c.college !== options.college) return false;
         return true;
     });
@@ -286,10 +286,10 @@ const generateLectureSchedule = async (courses, options = {}) => {
 // 2. Exam Scheduler
 const generateExamSchedule = async (courses, options = {}) => {
     console.log("Generating Exam Schedule...");
-    const exams = courses.filter(c => c.type === 'Exam').filter(c => {
+    const exams = courses.filter(c => !c.type || c.type === 'Exam').filter(c => {
         if (!matchesDepartmentFilter(c.department, options)) return false;
         if (options.level && Number(c.level) !== Number(options.level)) return false;
-        if (options.semester && c.semester !== options.semester) return false;
+        if (options.semester && c.semester && c.semester !== options.semester) return false;
         if (options.college && c.college && c.college !== options.college) return false;
         return true;
     });
@@ -347,10 +347,10 @@ const generateExamSchedule = async (courses, options = {}) => {
 // 3. Test Scheduler
 const generateTestSchedule = async (courses, options = {}) => {
     console.log("Generating Test Schedule...");
-    const tests = courses.filter(c => c.type === 'Test').filter(c => {
+    const tests = courses.filter(c => !c.type || c.type === 'Test').filter(c => {
         if (!matchesDepartmentFilter(c.department, options)) return false;
         if (options.level && Number(c.level) !== Number(options.level)) return false;
-        if (options.semester && c.semester !== options.semester) return false;
+        if (options.semester && c.semester && c.semester !== options.semester) return false;
         if (options.college && c.college && c.college !== options.college) return false;
         return true;
     });

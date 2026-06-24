@@ -76,6 +76,7 @@ const AdminManager = () => {
     const [masterCourses, setMasterCourses] = useState([]);
     const [timetables, setTimetables] = useState([]);
     const [forms, setForms] = useState(emptyForms);
+    const [lecturerText, setLecturerText] = useState('');
     const [notice, setNotice] = useState({ message: '', type: 'info' });
     const [editingCourseId, setEditingCourseId] = useState(null);
     const [editingMasterCourseId, setEditingMasterCourseId] = useState(null);
@@ -248,6 +249,7 @@ const AdminManager = () => {
             }
 
             setForms(prev => ({ ...prev, course: emptyForms.course }));
+            setLecturerText('');
             setEditingCourseId(null);
             setNotice({ message: editingCourseId ? 'Course updated' : 'Course added', type: 'success' });
             fetchAll();
@@ -276,6 +278,7 @@ const AdminManager = () => {
                 timetable_id: course.timetable_id?.toString() || ''
             }
         }));
+        setLecturerText((course.lecturers || []).join(', '));
         setEditingCourseId(course.id);
         setActiveTab('courses');
     };
@@ -292,6 +295,7 @@ const AdminManager = () => {
 
     const cancelCourseEdit = () => {
         setForms(prev => ({ ...prev, course: emptyForms.course }));
+        setLecturerText('');
         setEditingCourseId(null);
     };
 
@@ -412,6 +416,18 @@ const AdminManager = () => {
     // Master Course (Course Pool) functions
     const submitMasterCourse = async () => {
         const courseData = { ...forms.course, timetable_id: null };
+
+        const level = parseInt(courseData.level);
+        const units = parseInt(courseData.units);
+        if (!courseData.code || !courseData.title || !courseData.department) {
+            setNotice({ message: 'Code, title, and department are required.', type: 'error' });
+            return;
+        }
+        if (isNaN(level)) {
+            setNotice({ message: 'Level is required (e.g. 100, 200).', type: 'error' });
+            return;
+        }
+
         const url = editingMasterCourseId ? `${API_BASE_URL}/courses/${editingMasterCourseId}` : `${API_BASE_URL}/courses`;
         const method = editingMasterCourseId ? 'PUT' : 'POST';
 
@@ -421,9 +437,9 @@ const AdminManager = () => {
                 headers: { 'Content-Type': 'application/json', ...adminHeaders() },
                 body: JSON.stringify({
                     ...courseData,
-                    units: parseInt(courseData.units),
-                    level: parseInt(courseData.level),
-                    duration: parseFloat(courseData.duration)
+                    units: isNaN(units) ? null : units,
+                    level,
+                    duration: parseFloat(courseData.duration) || 1
                 })
             });
 
@@ -433,6 +449,7 @@ const AdminManager = () => {
             }
 
             setForms(prev => ({ ...prev, course: emptyForms.course }));
+            setLecturerText('');
             setEditingMasterCourseId(null);
             setNotice({ message: editingMasterCourseId ? 'Course updated' : 'Course added to pool', type: 'success' });
             fetchAll();
@@ -461,6 +478,7 @@ const AdminManager = () => {
                 timetable_id: ''
             }
         }));
+        setLecturerText((course.lecturers || []).join(', '));
         setEditingMasterCourseId(course.id);
         setActiveTab('coursepool');
     };
@@ -549,6 +567,7 @@ const AdminManager = () => {
 
     const cancelMasterCourseEdit = () => {
         setForms(prev => ({ ...prev, course: emptyForms.course }));
+        setLecturerText('');
         setEditingMasterCourseId(null);
     };
 
@@ -1194,8 +1213,9 @@ const AdminManager = () => {
                                 </div>
                             ) : (
                                 <input
-                                    value={forms.course.lecturers.join(', ')}
-                                    onChange={(e) => setForms(prev => ({ ...prev, course: { ...prev.course, lecturers: e.target.value.split(',').map(l => l.trim()).filter(Boolean) } }))}
+                                    value={lecturerText}
+                                    onChange={(e) => setLecturerText(e.target.value)}
+                                    onBlur={(e) => setForms(prev => ({ ...prev, course: { ...prev.course, lecturers: e.target.value.split(',').map(l => l.trim()).filter(Boolean) } }))}
                                     placeholder="Enter lecturer names separated by commas"
                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent"
                                 />

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import API_BASE_URL from '../apiBase';
 import { adminHeaders } from '../adminAuth';
@@ -80,6 +80,7 @@ const AdminManager = () => {
     const [notice, setNotice] = useState({ message: '', type: 'info' });
     const [editingCourseId, setEditingCourseId] = useState(null);
     const [editingMasterCourseId, setEditingMasterCourseId] = useState(null);
+    const masterCourseFormRef = useRef(null);
     const [courseSearch, setCourseSearch] = useState('');
     const [courseFilterDept, setCourseFilterDept] = useState('');
     const [courseFilterLevel, setCourseFilterLevel] = useState('');
@@ -481,6 +482,7 @@ const AdminManager = () => {
         setLecturerText((course.lecturers || []).join(', '));
         setEditingMasterCourseId(course.id);
         setActiveTab('coursepool');
+        setTimeout(() => masterCourseFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
     };
 
     const deleteMasterCourse = async (id) => {
@@ -1003,7 +1005,7 @@ const AdminManager = () => {
                     </div>
 
                     {/* Add/Edit Master Course Form */}
-                    <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
+                    <div ref={masterCourseFormRef} className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
                         <div className="flex justify-between items-center mb-4">
                             <h4 className="font-medium text-slate-700">{editingMasterCourseId ? 'Edit Master Course' : 'Add New Master Course'}</h4>
                             <div className="flex gap-2">

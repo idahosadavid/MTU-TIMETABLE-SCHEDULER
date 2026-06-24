@@ -54,6 +54,19 @@ const removeCourse = async (timetableId, courseId) => {
     return { success: true };
 };
 
+// Remove multiple courses from a timetable at once
+const removeCourses = async (timetableId, courseIds) => {
+    if (!courseIds || courseIds.length === 0) return { success: true };
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+        .from('timetable_courses')
+        .delete()
+        .eq('timetable_id', timetableId)
+        .in('course_id', courseIds);
+    if (error) throw new Error(error.message || 'Failed to remove courses from timetable');
+    return { success: true };
+};
+
 // Copy course assignments from one timetable to another
 const copyCoursesFromTimetable = async (targetTimetableId, sourceTimetableId) => {
     const supabase = getSupabaseClient();
@@ -88,6 +101,7 @@ module.exports = {
     getMasterCourses,
     assignCourse,
     removeCourse,
+    removeCourses,
     copyCoursesFromTimetable,
     assignCourses
 };

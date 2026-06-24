@@ -1541,28 +1541,31 @@ app.post('/api/timetables/:id/save', requireAdmin, (req, res) => {
 });
 
 // Clear Unscheduled Courses (Specific ID)
-app.post('/api/timetables/:id/clear-unscheduled', requireAdmin, (req, res) => {
+app.post('/api/timetables/:id/clear-unscheduled', requireAdmin, async (req, res) => {
     const { id } = req.params;
 
-    timetablesRepo.getById(id)
-        .then((row) => {
-            if (!row) {
-                throw new Error('Timetable not found');
-            }
+    try {
+        const row = await timetablesRepo.getById(id);
+        if (!row) return res.status(400).json({ error: 'Timetable not found' });
 
-            const currentData = row.data;
-            const scheduled = Array.isArray(currentData) ? currentData : (currentData.scheduled || []);
-            const newData = JSON.stringify({ scheduled, unscheduled: [] });
+        const currentData = row.data;
+        const scheduled = Array.isArray(currentData) ? currentData : (currentData.scheduled || []);
+        const unscheduled = Array.isArray(currentData) ? [] : (currentData.unscheduled || []);
 
-            return timetablesRepo.updateDataById(id, newData);
-        })
-        .then(() => res.json({ message: 'Unscheduled courses cleared' }))
-        .catch((err) => {
-            if (err.message === 'Timetable not found') {
-                return res.status(400).json({ error: 'Timetable not found' });
-            }
-            return res.status(400).json({ error: err.message });
-        });
+        // Unassign courses that are only in unscheduled (not placed in the grid),
+        // so the injection logic on reload won't re-add them.
+        const scheduledIds = new Set(scheduled.map(c => c.id).filter(Boolean));
+        const toUnassign = unscheduled.map(c => c.id).filter(id => id && !scheduledIds.has(id));
+
+        await timetablesRepo.updateDataById(id, JSON.stringify({ scheduled, unscheduled: [] }));
+        if (toUnassign.length > 0) {
+            await timetableCoursesRepo.removeCourses(id, toUnassign);
+        }
+
+        res.json({ message: 'Unscheduled courses cleared' });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
 });
 
 // Latest timetable by type (legacy compatibility endpoint)

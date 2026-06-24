@@ -357,10 +357,10 @@ const TimetableView = () => {
             const masterData = await masterRes.json();
             const timetableData = await timetableRes.json();
 
-            const unassignedCourses = masterData.data || [];
+            const allCourses = masterData.data || [];
             const assignedCourses = timetableData.data || [];
-            
-            setMasterCourses([...unassignedCourses, ...assignedCourses]);
+
+            setMasterCourses(allCourses);
             const assignedIds = new Set(assignedCourses.map(c => c.id));
             setAssignedCourseIds(assignedIds);
         } catch (err) {

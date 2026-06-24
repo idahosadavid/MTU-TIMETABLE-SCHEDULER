@@ -107,7 +107,8 @@ const TimetableView = () => {
     const [conflictsLoading, setConflictsLoading] = useState(false);
     const [showConflicts, setShowConflicts] = useState(false);
     const previousSignatureRef = useRef('');
-    const suppressNextNotificationRef = useRef(false);
+    const pendingDataRef = useRef(null);   // incoming server state not yet applied to grid
+    const isDirtyRef = useRef(false);      // user has uncommitted local edits
     const hasInitiallyLoadedRef = useRef(false);
 
     const fetchTimetable = async ({ silent = false } = {}) => {
@@ -155,11 +156,21 @@ const TimetableView = () => {
                 });
 
                 if (!silent && previousSignatureRef.current && previousSignatureRef.current !== nextSignature) {
-                    if (suppressNextNotificationRef.current) {
-                        suppressNextNotificationRef.current = false;
-                    } else {
-                        setChangeNotice('Timetable updated with new changes.');
-                    }
+                    // Store incoming data without applying it — let the user decide via the toast.
+                    pendingDataRef.current = {
+                        timetable: data.data,
+                        scheduled: currentScheduled,
+                        unscheduled: currentUnscheduled,
+                        signature: nextSignature,
+                    };
+                    const noticeMsg = isDirtyRef.current
+                        ? 'New changes are available — Refresh now or keep editing?'
+                        : 'Timetable updated with new changes.';
+                    setChangeNotice(noticeMsg);
+                    // Do not overwrite grid state here; Refresh button will apply pendingDataRef.
+                    setLoading(false);
+                    hasInitiallyLoadedRef.current = true;
+                    return;
                 }
 
                 previousSignatureRef.current = nextSignature;
@@ -174,6 +185,20 @@ const TimetableView = () => {
             console.error('Failed to fetch timetable', err);
             setLoading(false);
         }
+    };
+
+    const applyPendingData = () => {
+        const pending = pendingDataRef.current;
+        if (pending) {
+            previousSignatureRef.current = pending.signature;
+            setTimetable(pending.timetable);
+            setScheduled(pending.scheduled);
+            setUnscheduled(pending.unscheduled);
+            setLastCheckedAt(new Date());
+            pendingDataRef.current = null;
+        }
+        isDirtyRef.current = false;
+        setChangeNotice('');
     };
 
     useEffect(() => {
@@ -231,13 +256,15 @@ const TimetableView = () => {
         const newUnscheduled = [...unscheduled, { ...course, day: undefined, time: undefined }];
         setScheduled(newScheduled);
         setUnscheduled(newUnscheduled);
-        suppressNextNotificationRef.current = true;
+        isDirtyRef.current = true;
         try {
             await fetch(`${API_BASE_URL}/timetables/${timetableId}/save`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...adminHeaders() },
                 body: JSON.stringify({ scheduled: newScheduled, unscheduled: newUnscheduled })
             });
+            isDirtyRef.current = false;
+            pendingDataRef.current = null;
             setActionNotice({ message: 'Course moved to unscheduled.', type: 'success' });
         } catch (err) {
             console.error('Error saving move to unscheduled:', err);
@@ -275,7 +302,7 @@ const TimetableView = () => {
 
                 setScheduled(newScheduled);
                 setUnscheduled(newUnscheduled);
-                suppressNextNotificationRef.current = true;
+                isDirtyRef.current = true;
 
                 // Save changes
                 await fetch(`${API_BASE_URL}/timetables/${timetableId}/save`, {
@@ -283,6 +310,8 @@ const TimetableView = () => {
                     headers: { 'Content-Type': 'application/json', ...adminHeaders() },
                     body: JSON.stringify({ scheduled: newScheduled, unscheduled: newUnscheduled })
                 });
+                isDirtyRef.current = false;
+                pendingDataRef.current = null;
                 setActionNotice({ message: 'Course moved successfully.', type: 'success' });
             } else {
                 setActionNotice({ message: 'Conflict detected. Cannot move course here.', type: 'error' });
@@ -301,7 +330,6 @@ const TimetableView = () => {
 
         try {
             // Use dedicated endpoint to ensure we don't accidentally wipe scheduled courses
-            suppressNextNotificationRef.current = true;
             const res = await fetch(`${API_BASE_URL}/timetables/${timetableId}/clear-unscheduled`, {
                 method: 'POST',
                 headers: adminHeaders()
@@ -499,10 +527,7 @@ const TimetableView = () => {
                 message={changeNotice}
                 type="info"
                 actionLabel="Refresh"
-                onAction={() => {
-                    setChangeNotice('');
-                    fetchTimetable({ silent: true });
-                }}
+                onAction={applyPendingData}
                 onDismiss={() => setChangeNotice('')}
                 stackIndex={1}
             />
@@ -928,11 +953,14 @@ const TimetableView = () => {
                                                                                                             const newUnscheduled = [...unscheduled, course];
                                                                                                             setScheduled(newScheduled);
                                                                                                             setUnscheduled(newUnscheduled);
-                                                                                                            suppressNextNotificationRef.current = true;
+                                                                                                            isDirtyRef.current = true;
                                                                                                             fetch(`${API_BASE_URL}/timetables/${timetableId}/save`, {
                                                                                                                 method: 'POST',
                                                                                                                 headers: { 'Content-Type': 'application/json', ...adminHeaders() },
                                                                                                                 body: JSON.stringify({ scheduled: newScheduled, unscheduled: newUnscheduled })
+                                                                                                            }).then(() => {
+                                                                                                                isDirtyRef.current = false;
+                                                                                                                pendingDataRef.current = null;
                                                                                                             });
                                                                                                         }}
                                                                                                         className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-600"

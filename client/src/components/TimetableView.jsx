@@ -169,7 +169,6 @@ const TimetableView = () => {
                     setChangeNotice(noticeMsg);
                     // Do not overwrite grid state here; Refresh button will apply pendingDataRef.
                     setLoading(false);
-                    hasInitiallyLoadedRef.current = true;
                     return;
                 }
 

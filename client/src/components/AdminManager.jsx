@@ -1309,6 +1309,7 @@ const AdminManager = () => {
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Level</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Type</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Units</th>
+                                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Venue</th>
                                         <th className="text-right py-3 px-4 text-xs font-semibold text-slate-600 uppercase w-40">Actions</th>
                                     </tr>
                                 </thead>
@@ -1339,6 +1340,7 @@ const AdminManager = () => {
                                                 }`}>{course.type}</span>
                                             </td>
                                             <td className="py-3 px-4 text-slate-600">{course.units}</td>
+                                            <td className="py-3 px-4 text-slate-600">{course.venue || <span className="text-slate-400 italic">—</span>}</td>
                                             <td className="py-3 px-4 text-right">
                                                 <div className="flex justify-end gap-2">
                                                     <button

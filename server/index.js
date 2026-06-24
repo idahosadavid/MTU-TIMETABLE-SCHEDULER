@@ -1044,12 +1044,13 @@ const autoSyncCoursesFromPortal = async ({ timetable_id, timetableRow, departmen
                 continue;
             }
 
-            await coursesRepo.create({
+            const created = await coursesRepo.create({
                 code, title, college, department: dept, level, lecturers,
                 units, semester, type, is_compulsory,
                 preferred_day: 'AUTO', preferred_time: 'AUTO',
-                venue: '', duration, student_count, custom_data: {}, timetable_id
+                venue: '', duration, student_count, custom_data: {}
             });
+            await timetableCoursesRepo.assignCourse(timetable_id, created.lastID);
             imported++;
         } catch {
             skipped++;
@@ -1068,13 +1069,13 @@ app.post('/api/courses', requireAdmin, (req, res) => {
     const timetable_id = req.body.timetable_id;
 
     (timetable_id ? timetablesRepo.getRawById(timetable_id) : Promise.resolve(null))
-        .then((timetableRow) => {
+        .then(async (timetableRow) => {
             if (timetable_id && !timetableRow) {
                 throw new Error('Invalid timetable_id');
             }
 
             const college = timetableRow ? timetableRow.college || null : null;
-            return coursesRepo.create({
+            const result = await coursesRepo.create({
                 code,
                 title,
                 college,
@@ -1089,9 +1090,12 @@ app.post('/api/courses', requireAdmin, (req, res) => {
                 preferred_time,
                 venue,
                 duration: durationInMinutes,
-                custom_data,
-                timetable_id
+                custom_data
             });
+            if (timetable_id) {
+                await timetableCoursesRepo.assignCourse(timetable_id, result.lastID);
+            }
+            return result;
         })
         .then((result) => {
             res.json({ message: 'Course added successfully', id: result.lastID });
@@ -1125,7 +1129,7 @@ app.post('/api/courses/bulk', requireAdmin, async (req, res) => {
                 college = timetableRow.college || null;
             }
 
-            await coursesRepo.create({
+            const created = await coursesRepo.create({
                 code: c.code,
                 title: c.title,
                 college,
@@ -1140,9 +1144,11 @@ app.post('/api/courses/bulk', requireAdmin, async (req, res) => {
                 preferred_time: c.preferred_time || 'AUTO',
                 venue: c.venue || '',
                 duration: durationInMinutes,
-                custom_data: c.custom_data || {},
-                timetable_id: c.timetable_id || null
+                custom_data: c.custom_data || {}
             });
+            if (c.timetable_id) {
+                await timetableCoursesRepo.assignCourse(c.timetable_id, created.lastID);
+            }
             addedCount++;
         } catch (err) {
             errors.push(`Row ${i + 1} (${c.code}): ${err.message}`);
@@ -1202,7 +1208,7 @@ app.get('/api/courses/:id', (req, res) => {
 // Update a course
 app.put('/api/courses/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
-    const { code, title, department, level, lecturers, units, semester, type, is_compulsory, preferred_day, preferred_time, venue, duration, custom_data, timetable_id } = req.body;
+    const { code, title, department, level, lecturers, units, semester, type, is_compulsory, preferred_day, preferred_time, venue, duration, custom_data } = req.body;
     const durationInMinutes = parseFloat(duration) * 60;
 
     coursesRepo.getById(id)
@@ -1225,8 +1231,7 @@ app.put('/api/courses/:id', requireAdmin, (req, res) => {
                 preferred_time,
                 venue,
                 duration: durationInMinutes,
-                custom_data,
-                timetable_id: timetable_id || existing.timetable_id
+                custom_data
             });
         })
         .then(() => {
@@ -1268,14 +1273,14 @@ app.get('/api/debug/supabase', requireAdmin, async (req, res) => {
         // Test 2: Try to get all courses (no filter)
         const { data: allData, error: allError } = await supabase
             .from('courses')
-            .select('id, code, title, timetable_id')
+            .select('id, code, title')
             .limit(5);
 
-        // Test 3: Try null filter
+        // Test 3: Check timetable_courses junction table
         const { data: nullData, error: nullError } = await supabase
-            .from('courses')
-            .select('id, code, title')
-            .is('timetable_id', null);
+            .from('timetable_courses')
+            .select('timetable_id, course_id')
+            .limit(5);
 
         res.json({
             test1_count: { data: countData, error: countError },

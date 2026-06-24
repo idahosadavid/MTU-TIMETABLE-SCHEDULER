@@ -28,26 +28,25 @@ const normalizeRowForGeneration = (row) => {
 
 const listByTimetableId = async (timetableId) => {
 	const supabase = getSupabaseClient();
-	const rows = await fetchMany(
-		supabase
-			.from('courses')
-			.select('*')
-			.eq('timetable_id', timetableId)
-	);
-	return rows.map(normalizeRowForGeneration);
+	const { data, error } = await supabase
+		.from('timetable_courses')
+		.select('courses(*)')
+		.eq('timetable_id', timetableId);
+	if (error) throw new Error(error.message || 'Failed to list courses by timetable');
+	return (data || []).map(row => normalizeRowForGeneration(row.courses)).filter(Boolean);
 };
 
 const list = async ({ timetableId } = {}) => {
 	const supabase = getSupabaseClient();
-	let query = supabase
-		.from('courses')
-		.select('*');
-
 	if (timetableId) {
-		query = query.eq('timetable_id', timetableId);
+		const { data, error } = await supabase
+			.from('timetable_courses')
+			.select('courses(*)')
+			.eq('timetable_id', timetableId);
+		if (error) throw new Error(error.message || 'Failed to list courses by timetable');
+		return (data || []).map(row => row.courses).filter(Boolean);
 	}
-
-	return fetchMany(query);
+	return fetchMany(supabase.from('courses').select('*'));
 };
 
 const create = async (course) => {
@@ -73,8 +72,7 @@ const create = async (course) => {
 		preferred_time: course.preferred_time || 'AUTO',
 		venue: course.venue || '',
 		duration: course.duration,
-		custom_data,
-		timetable_id: course.timetable_id
+		custom_data
 	};
 
 	const { data, error } = await supabase
@@ -121,8 +119,7 @@ const update = async (id, course) => {
 		preferred_time: course.preferred_time || 'AUTO',
 		venue: course.venue || '',
 		duration: course.duration,
-		custom_data,
-		timetable_id: course.timetable_id
+		custom_data
 	};
 
 	const { error } = await supabase

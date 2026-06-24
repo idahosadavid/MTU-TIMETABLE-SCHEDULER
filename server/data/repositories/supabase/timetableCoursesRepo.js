@@ -1,6 +1,5 @@
-const { getSupabaseClient, fetchMany, fetchOne } = require('./helpers');
+const { getSupabaseClient, fetchMany } = require('./helpers');
 
-// Normalize course row for frontend compatibility
 const normalizeCourse = (row) => {
     if (!row) return null;
     return {
@@ -11,103 +10,75 @@ const normalizeCourse = (row) => {
     };
 };
 
-// Get courses assigned to a specific timetable
+// Get courses assigned to a specific timetable (via junction table)
 const getCoursesByTimetableId = async (timetableId) => {
     const supabase = getSupabaseClient();
-    const rows = await fetchMany(
-        supabase
-            .from('courses')
-            .select('*')
-            .eq('timetable_id', timetableId)
-            .order('code', { ascending: true })
-    );
-    return rows.map(normalizeCourse);
+    const { data, error } = await supabase
+        .from('timetable_courses')
+        .select('courses(*)')
+        .eq('timetable_id', timetableId);
+    if (error) throw new Error(error.message || 'Failed to fetch timetable courses');
+    return (data || []).map(row => normalizeCourse(row.courses)).filter(Boolean);
 };
 
-// Get master courses (not assigned to any timetable)
+// Get ALL master courses — pool is never depleted by assignments
 const getMasterCourses = async () => {
     const supabase = getSupabaseClient();
-    const query = supabase
+    const { data, error } = await supabase
         .from('courses')
         .select('*')
-        .is('timetable_id', null)
         .order('code', { ascending: true });
-
-    const { data, error } = await query;
-
-    if (error) {
-        console.error('Supabase getMasterCourses error:', error);
-        throw new Error(error.message || 'Failed to fetch master courses');
-    }
-
+    if (error) throw new Error(error.message || 'Failed to fetch master courses');
     return (data || []).map(normalizeCourse);
 };
 
-// Assign a course to a timetable
+// Assign a course to a timetable (insert into junction table, ignore duplicates)
 const assignCourse = async (timetableId, courseId) => {
     const supabase = getSupabaseClient();
     const { error } = await supabase
-        .from('courses')
-        .update({ timetable_id: timetableId })
-        .eq('id', courseId);
-
+        .from('timetable_courses')
+        .upsert({ timetable_id: timetableId, course_id: courseId }, { onConflict: 'timetable_id,course_id' });
     if (error) throw new Error(error.message || 'Failed to assign course to timetable');
     return { success: true };
 };
 
-// Remove a course from a timetable (set timetable_id to null)
+// Remove a course from a timetable (delete from junction table)
 const removeCourse = async (timetableId, courseId) => {
     const supabase = getSupabaseClient();
     const { error } = await supabase
-        .from('courses')
-        .update({ timetable_id: null })
-        .eq('id', courseId)
-        .eq('timetable_id', timetableId);
-
+        .from('timetable_courses')
+        .delete()
+        .eq('timetable_id', timetableId)
+        .eq('course_id', courseId);
     if (error) throw new Error(error.message || 'Failed to remove course from timetable');
     return { success: true };
 };
 
-// Copy courses from another timetable (duplicate them in target)
+// Copy course assignments from one timetable to another
 const copyCoursesFromTimetable = async (targetTimetableId, sourceTimetableId) => {
     const supabase = getSupabaseClient();
-
-    // First, get all courses from source timetable
-    const { data: sourceCourses, error: fetchError } = await supabase
-        .from('courses')
-        .select('*')
+    const { data: sourceLinks, error: fetchError } = await supabase
+        .from('timetable_courses')
+        .select('course_id')
         .eq('timetable_id', sourceTimetableId);
-
     if (fetchError) throw new Error(fetchError.message || 'Failed to fetch source courses');
-    if (!sourceCourses || sourceCourses.length === 0) return { copied: 0 };
+    if (!sourceLinks || sourceLinks.length === 0) return { copied: 0 };
 
-    // Prepare courses for insertion (remove id, update timetable_id)
-    const coursesToInsert = sourceCourses.map(course => {
-        const { id, created_at, updated_at, ...courseData } = course;
-        return {
-            ...courseData,
-            timetable_id: targetTimetableId
-        };
-    });
-
-    // Insert copied courses
+    const toInsert = sourceLinks.map(row => ({ timetable_id: targetTimetableId, course_id: row.course_id }));
     const { error: insertError } = await supabase
-        .from('courses')
-        .insert(coursesToInsert);
-
+        .from('timetable_courses')
+        .upsert(toInsert, { onConflict: 'timetable_id,course_id' });
     if (insertError) throw new Error(insertError.message || 'Failed to copy courses');
-    return { copied: coursesToInsert.length };
+    return { copied: toInsert.length };
 };
 
 // Assign multiple courses at once
 const assignCourses = async (timetableId, courseIds) => {
     const supabase = getSupabaseClient();
-
+    const toInsert = courseIds.map(id => ({ timetable_id: timetableId, course_id: id }));
     const { error } = await supabase
-        .from('courses')
-        .update({ timetable_id: timetableId })
-        .in('id', courseIds);
-
+        .from('timetable_courses')
+        .upsert(toInsert, { onConflict: 'timetable_id,course_id' });
     if (error) throw new Error(error.message || 'Failed to assign courses to timetable');
     return { success: true, count: courseIds.length };
 };

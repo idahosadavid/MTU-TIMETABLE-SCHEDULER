@@ -1067,7 +1067,7 @@ app.post('/api/courses', requireAdmin, (req, res) => {
     const durationInMinutes = parseFloat(duration) * 60;
     const timetable_id = req.body.timetable_id;
 
-    timetablesRepo.getRawById(timetable_id || null)
+    (timetable_id ? timetablesRepo.getRawById(timetable_id) : Promise.resolve(null))
         .then((timetableRow) => {
             if (timetable_id && !timetableRow) {
                 throw new Error('Invalid timetable_id');
@@ -1097,6 +1097,7 @@ app.post('/api/courses', requireAdmin, (req, res) => {
             res.json({ message: 'Course added successfully', id: result.lastID });
         })
         .catch((err) => {
+            console.error('[POST /api/courses] error:', err.message, '| body:', JSON.stringify(req.body));
             if (err.message === 'Invalid timetable_id') {
                 return res.status(400).json({ error: 'Invalid timetable_id' });
             }

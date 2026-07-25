@@ -12,7 +12,11 @@ const repositories = {
 const STUDENT_DATA_SOURCE = process.env.MTU_STUDENT_DATA_SOURCE || 'db';
 
 if (STUDENT_DATA_SOURCE === 'api') {
-    repositories.studentsRepo = require('./api/studentsRepo');
+    try {
+        repositories.studentsRepo = require('./api/studentsRepo');
+    } catch {
+        console.warn('[Repositories] MTU_STUDENT_DATA_SOURCE=api but ./api/studentsRepo is not available — falling back to the database-backed students repo.');
+    }
 }
 
 module.exports = { repositories };

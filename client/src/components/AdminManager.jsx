@@ -13,10 +13,11 @@ const emptyForms = {
     course: { code: '', title: '', department: '', level: '', lecturers: [], units: '', semester: 'First', type: 'Lecture', is_compulsory: false, preferred_day: 'AUTO', preferred_time: 'AUTO', venue: '', duration: 1, timetable_id: '' }
 };
 
-const SectionCard = ({ title, children }) => (
+const SectionCard = ({ title, subtitle, children }) => (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="bg-slate-50 border-b border-slate-200 px-6 py-4 flex items-center gap-3">
+        <div className="bg-slate-50 border-b border-slate-200 px-6 py-4">
             <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
+            {subtitle && <p className="text-sm text-slate-500 mt-0.5">{subtitle}</p>}
         </div>
         <div className="p-6">{children}</div>
     </div>
@@ -44,11 +45,128 @@ const AddButton = ({ onClick, children }) => (
 );
 
 const FormInput = ({ ...props }) => (
-    <input 
-        className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent text-sm w-full" 
-        {...props} 
+    <input
+        className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent text-sm w-full"
+        {...props}
     />
 );
+
+// Generic CSV bulk-upload bar used by each setup section.
+// `fields`  — array of { key, label, required? } describing expected columns
+// `onUpload` — async fn(rows) → { message, errors? }
+// `templateName` — filename for the downloaded sample CSV
+const BulkUploadBar = ({ fields, onUpload, templateName }) => {
+    const inputId = React.useId();
+
+    const downloadTemplate = () => {
+        const headers = fields.map(f => f.label);
+        const sample = fields.map(f => f.sample || '');
+        const csv = headers.join(',') + '\n' + sample.map(v => `"${v}"`).join(',');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.setAttribute('download', templateName || 'template.csv');
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    const handleFile = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const text = await file.text();
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (lines.length < 2) { alert('CSV is empty or missing header row.'); return; }
+
+        // Simple RFC-4180 line parser (same logic as courses bulk)
+        const parseLine = (line) => {
+            const out = []; let field = ''; let inQ = false;
+            for (let i = 0; i < line.length; i++) {
+                const ch = line[i];
+                if (inQ) { if (ch === '"') { if (line[i+1] === '"') { field += '"'; i++; } else { inQ = false; } } else { field += ch; } }
+                else { if (ch === '"') { inQ = true; } else if (ch === ',') { out.push(field.trim()); field = ''; } else { field += ch; } }
+            }
+            out.push(field.trim());
+            return out;
+        };
+
+        const headers = parseLine(lines[0]).map(h => h.toLowerCase().replace(/\s+/g, '_'));
+        const rows = lines.slice(1).map(line => {
+            const vals = parseLine(line);
+            const row = {};
+            fields.forEach(f => {
+                const idx = headers.findIndex(h => h.includes(f.key.toLowerCase()) || h === f.label.toLowerCase().replace(/\s+/g, '_'));
+                row[f.key] = idx >= 0 ? vals[idx] || '' : '';
+            });
+            return row;
+        }).filter(r => fields.filter(f => f.required).every(f => r[f.key]));
+
+        if (rows.length === 0) { alert('No valid rows found. Make sure required columns are filled.'); return; }
+        await onUpload(rows);
+        e.target.value = '';
+    };
+
+    return (
+        <div className="flex items-center gap-2 mb-4">
+            <span className="text-xs text-slate-500 mr-1">Bulk import:</span>
+            <button onClick={downloadTemplate} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-lg flex items-center gap-1 transition-colors border border-slate-300">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                Template
+            </button>
+            <input type="file" id={inputId} accept=".csv" className="hidden" onChange={handleFile} />
+            <label htmlFor={inputId} className="px-3 py-1.5 bg-[#059669] hover:bg-[#047857] text-white text-xs font-medium rounded-lg flex items-center gap-1 transition-colors cursor-pointer">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                Upload CSV
+            </label>
+        </div>
+    );
+};
+
+const AddRuleForm = ({ onCreate }) => {
+    const empty = { name: '', rule_key: '', rule_value: '', is_active: 1 };
+    const [form, setForm] = React.useState(empty);
+    const [saving, setSaving] = React.useState(false);
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!form.name || !form.rule_key || form.rule_value === '') return;
+        setSaving(true);
+        const ok = await onCreate(form);
+        if (ok) setForm(empty);
+        setSaving(false);
+    };
+
+    return (
+        <form onSubmit={handleSubmit} className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <h4 className="text-sm font-semibold text-slate-700 mb-3">Add New Rule</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Rule Name *</label>
+                    <FormInput required placeholder="e.g. Max lectures per day" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} />
+                </div>
+                <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Key *</label>
+                    <FormInput required placeholder="e.g. max_lectures_per_day" value={form.rule_key} onChange={e => setForm(p => ({ ...p, rule_key: e.target.value }))} className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent text-sm w-full font-mono" />
+                </div>
+                <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Value *</label>
+                    <FormInput required placeholder="e.g. 4" value={form.rule_value} onChange={e => setForm(p => ({ ...p, rule_value: e.target.value }))} />
+                </div>
+                <div className="flex flex-col justify-end gap-2 sm:flex-row sm:items-end">
+                    <select value={form.is_active} onChange={e => setForm(p => ({ ...p, is_active: Number(e.target.value) }))} className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-[#4c1d95]">
+                        <option value={1}>Active</option>
+                        <option value={0}>Inactive</option>
+                    </select>
+                    <button type="submit" disabled={saving} className="bg-[#4c1d95] hover:bg-[#3c1780] text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 whitespace-nowrap">
+                        {saving ? 'Adding…' : 'Add Rule'}
+                    </button>
+                </div>
+            </div>
+        </form>
+    );
+};
 
 const FormSelect = ({ children, ...props }) => (
     <select 
@@ -401,9 +519,11 @@ const AdminManager = () => {
                     throw new Error(data.error || 'Bulk upload failed');
                 }
 
-                setNotice({ message: data.message, type: 'success' });
                 if (data.errors && data.errors.length > 0) {
-                    console.warn('Some rows failed to import:', data.errors);
+                    const summary = `${data.addedCount} imported, ${data.errors.length} failed:\n• ${data.errors.slice(0, 5).join('\n• ')}${data.errors.length > 5 ? `\n…and ${data.errors.length - 5} more` : ''}`;
+                    setNotice({ message: summary, type: data.addedCount > 0 ? 'warning' : 'error' });
+                } else {
+                    setNotice({ message: data.message, type: 'success' });
                 }
                 fetchAll();
             } catch (err) {
@@ -611,12 +731,60 @@ const AdminManager = () => {
         fetchAll();
     };
 
+    const handleBulkUploadEntity = async (endpoint, rows, label) => {
+        try {
+            const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                body: JSON.stringify({ rows })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `Bulk import failed`);
+            const msg = data.errors?.length
+                ? `${data.count} ${label}(s) imported, ${data.errors.length} failed:\n• ${data.errors.slice(0, 5).join('\n• ')}`
+                : data.message;
+            setNotice({ message: msg, type: data.errors?.length ? 'warning' : 'success' });
+            fetchAll();
+        } catch (err) {
+            setNotice({ message: err.message, type: 'error' });
+        }
+    };
+
+    const createRule = async (ruleData) => {
+        const response = await fetch(`${API_BASE_URL}/admin/rules`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+            body: JSON.stringify(ruleData)
+        });
+        if (!response.ok) {
+            const error = await response.json();
+            setNotice({ message: error.error || 'Failed to create rule', type: 'error' });
+            return false;
+        }
+        setNotice({ message: 'Rule created successfully.', type: 'success' });
+        fetchAll();
+        return true;
+    };
+
+    const deleteRule = async (id) => {
+        const response = await fetch(`${API_BASE_URL}/admin/rules/${id}`, {
+            method: 'DELETE',
+            headers: adminHeaders()
+        });
+        if (!response.ok) {
+            setNotice({ message: 'Failed to delete rule', type: 'error' });
+            return;
+        }
+        setNotice({ message: 'Rule deleted.', type: 'success' });
+        fetchAll();
+    };
+
     const tabs = [
         { id: 'colleges', label: 'Colleges', count: colleges.length, icon: '🏛️' },
         { id: 'departments', label: 'Departments', count: departments.length, icon: '📚' },
-        { id: 'lecturers', label: 'Lecturers', count: lecturers.length, icon: '👨‍🏫' },
         { id: 'venues', label: 'Venues', count: venues.length, icon: '🏢' },
-        { id: 'coursepool', label: 'Course Pool', count: masterCourses.length, icon: '�' },
+        { id: 'lecturers', label: 'Lecturers', count: lecturers.length, icon: '👨‍🏫' },
+        { id: 'coursepool', label: 'Course Pool', count: masterCourses.length, icon: '📖' },
         { id: 'rules', label: 'Scheduling Rules', count: rules.length, icon: '⚙️' }
     ];
 
@@ -635,10 +803,10 @@ const AdminManager = () => {
                     <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
                     </svg>
-                    Back to Timetables
+                    Timetables
                 </Link>
-                <h1 className="text-2xl font-bold text-slate-900">Admin Data Management</h1>
-                <p className="text-slate-500 mt-1">Manage colleges, departments, lecturers, venues, courses, and scheduling rules</p>
+                <h1 className="text-2xl font-bold text-slate-900">System Setup</h1>
+                <p className="text-slate-500 mt-1">Configure your institution before creating timetables. Complete each section in order — colleges first, then departments, venues, lecturers, courses, and rules.</p>
             </div>
 
             {/* Stats Cards */}
@@ -668,7 +836,15 @@ const AdminManager = () => {
 
             {/* Colleges Section */}
             {activeTab === 'colleges' && (
-                <SectionCard title="Manage Colleges">
+                <SectionCard title="Colleges" subtitle="Step 1 — The top-level organisational units. Departments must belong to a college.">
+                    <BulkUploadBar
+                        templateName="colleges_template.csv"
+                        fields={[
+                            { key: 'code', label: 'Code', required: true, sample: 'CBAS' },
+                            { key: 'name', label: 'Name', required: true, sample: 'College of Basic and Applied Sciences' },
+                        ]}
+                        onUpload={rows => handleBulkUploadEntity('/admin/colleges/bulk', rows, 'college')}
+                    />
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
                         <FormInput 
                             placeholder="Code (e.g. CBAS)" 
@@ -736,7 +912,16 @@ const AdminManager = () => {
 
             {/* Departments Section */}
             {activeTab === 'departments' && (
-                <SectionCard title="Manage Departments">
+                <SectionCard title="Departments" subtitle="Step 2 — Academic departments within each college. Courses and lecturers are grouped by department.">
+                    <BulkUploadBar
+                        templateName="departments_template.csv"
+                        fields={[
+                            { key: 'code', label: 'Code', required: true, sample: 'CSC' },
+                            { key: 'name', label: 'Name', required: true, sample: 'Computer Science' },
+                            { key: 'college_code', label: 'College Code', required: false, sample: 'CBAS' },
+                        ]}
+                        onUpload={rows => handleBulkUploadEntity('/admin/departments/bulk', rows, 'department')}
+                    />
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
                         <FormInput 
                             placeholder="Code (e.g. CSC)" 
@@ -820,7 +1005,16 @@ const AdminManager = () => {
 
             {/* Lecturers Section */}
             {activeTab === 'lecturers' && (
-                <SectionCard title="Manage Lecturers">
+                <SectionCard title="Lecturers" subtitle="Step 4 — Teaching staff who can be assigned to courses. The scheduler avoids double-booking a lecturer in the same time slot.">
+                    <BulkUploadBar
+                        templateName="lecturers_template.csv"
+                        fields={[
+                            { key: 'name', label: 'Name', required: true, sample: 'Dr. Adeyemi' },
+                            { key: 'department_code', label: 'Department Code', required: false, sample: 'CSC' },
+                            { key: 'email', label: 'Email', required: false, sample: 'adeyemi@mtu.edu.ng' },
+                        ]}
+                        onUpload={rows => handleBulkUploadEntity('/admin/lecturers/bulk', rows, 'lecturer')}
+                    />
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
                         <FormInput 
                             placeholder="Full Name" 
@@ -905,7 +1099,16 @@ const AdminManager = () => {
 
             {/* Venues Section */}
             {activeTab === 'venues' && (
-                <SectionCard title="Manage Venues">
+                <SectionCard title="Venues" subtitle="Step 3 — Lecture halls, labs, and classrooms available for scheduling. Capacity is used to detect overcrowding conflicts.">
+                    <BulkUploadBar
+                        templateName="venues_template.csv"
+                        fields={[
+                            { key: 'name', label: 'Name', required: true, sample: 'Hall A' },
+                            { key: 'capacity', label: 'Capacity', required: false, sample: '200' },
+                            { key: 'college_code', label: 'College Code', required: false, sample: 'CBAS' },
+                        ]}
+                        onUpload={rows => handleBulkUploadEntity('/admin/venues/bulk', rows, 'venue')}
+                    />
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
                         <FormInput 
                             placeholder="Venue Name" 
@@ -991,7 +1194,7 @@ const AdminManager = () => {
 
             {/* Course Pool Section - Master Courses */}
             {activeTab === 'coursepool' && (
-                <SectionCard title="Course Pool (Master Courses)">
+                <SectionCard title="Course Pool" subtitle="Step 5 — The master list of all courses in the institution. Assign courses from this pool to individual timetables when scheduling.">
                     <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
                         <div className="flex items-start gap-2">
                             <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1000,6 +1203,54 @@ const AdminManager = () => {
                             <div>
                                 <p className="font-medium">Master courses are reusable across multiple timetables.</p>
                                 <p className="mt-1">Add courses here first, then assign them to specific timetables when creating schedules.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* CSV reference panel — shows valid values for fields that must match existing records */}
+                    <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm">
+                        <p className="font-semibold text-amber-800 mb-2 flex items-center gap-1.5">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                            </svg>
+                            When using CSV import, these fields must match existing records exactly
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                                <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">Department codes</p>
+                                {departments.length === 0 ? (
+                                    <p className="text-xs text-amber-600 italic">None configured — add departments in Setup first</p>
+                                ) : (
+                                    <div className="flex flex-wrap gap-1">
+                                        {departments.map(d => (
+                                            <span key={d.id} className="px-1.5 py-0.5 bg-white border border-amber-300 rounded text-xs font-mono text-amber-900">{d.code}</span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            <div>
+                                <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">Venue names</p>
+                                {venues.length === 0 ? (
+                                    <p className="text-xs text-amber-600 italic">None configured — add venues in Setup first</p>
+                                ) : (
+                                    <div className="flex flex-wrap gap-1">
+                                        {venues.map(v => (
+                                            <span key={v.id} className="px-1.5 py-0.5 bg-white border border-amber-300 rounded text-xs font-mono text-amber-900">{v.name}</span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            <div>
+                                <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">Lecturer names</p>
+                                {lecturers.length === 0 ? (
+                                    <p className="text-xs text-amber-600 italic">None configured — add lecturers in Setup first</p>
+                                ) : (
+                                    <div className="flex flex-wrap gap-1">
+                                        {lecturers.map(l => (
+                                            <span key={l.id} className="px-1.5 py-0.5 bg-white border border-amber-300 rounded text-xs font-mono text-amber-900">{l.name}</span>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -1374,22 +1625,233 @@ const AdminManager = () => {
                 </SectionCard>
             )}
 
-            {/* Rules Section */}
-            {activeTab === 'rules' && (
-                <SectionCard title="Manage Scheduling Rules">
-                    <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+            {/* Assigned Courses section removed — managed per-timetable in TimetableView */}
+            {false && (
+                <SectionCard title="Assigned Courses">
+                    <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
                         <div className="flex items-start gap-2">
                             <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
-                            <p>Rules are configured via system settings. Use the table below to view and activate/deactivate existing rules.</p>
+                            <div>
+                                <p className="font-medium">These are courses assigned to specific timetables.</p>
+                                <p className="mt-1">To add a reusable course not yet tied to a timetable, use the Course Pool tab instead.</p>
+                            </div>
                         </div>
                     </div>
-                    
-                    {rules.length === 0 ? (
-                        <EmptyState icon="⚙️" message="No scheduling rules configured" />
+
+                    {/* Add/Edit Form */}
+                    <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
+                        <h4 className="font-medium text-slate-700 mb-4">{editingCourseId ? 'Edit Course' : 'Add Course to Timetable'}</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Timetable</label>
+                                <FormSelect
+                                    value={forms.course.timetable_id}
+                                    onChange={(e) => updateForm('course', 'timetable_id', e.target.value)}
+                                >
+                                    <option value="">Select Timetable</option>
+                                    {timetables.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                </FormSelect>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Course Code</label>
+                                <FormInput placeholder="e.g. CSC 101" value={forms.course.code} onChange={(e) => updateForm('course', 'code', e.target.value)} />
+                            </div>
+                            <div className="md:col-span-2">
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Course Title</label>
+                                <FormInput placeholder="e.g. Introduction to Computer Science" value={forms.course.title} onChange={(e) => updateForm('course', 'title', e.target.value)} />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Department</label>
+                                <FormSelect value={forms.course.department} onChange={(e) => updateForm('course', 'department', e.target.value)}>
+                                    <option value="">Select Department</option>
+                                    {departments.map(d => <option key={d.id} value={d.code}>{d.code} - {d.name}</option>)}
+                                </FormSelect>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Level</label>
+                                <FormSelect value={forms.course.level} onChange={(e) => updateForm('course', 'level', e.target.value)}>
+                                    <option value="">Select Level</option>
+                                    <option value="100">100</option>
+                                    <option value="200">200</option>
+                                    <option value="300">300</option>
+                                    <option value="400">400</option>
+                                    <option value="500">500</option>
+                                </FormSelect>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Units</label>
+                                <FormInput type="number" placeholder="e.g. 3" value={forms.course.units} onChange={(e) => updateForm('course', 'units', e.target.value)} />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Type</label>
+                                <FormSelect value={forms.course.type} onChange={(e) => updateForm('course', 'type', e.target.value)}>
+                                    <option value="Lecture">Lecture</option>
+                                    <option value="Exam">Exam</option>
+                                    <option value="Test">Test</option>
+                                </FormSelect>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Semester</label>
+                                <FormSelect value={forms.course.semester} onChange={(e) => updateForm('course', 'semester', e.target.value)}>
+                                    <option value="First">First Semester</option>
+                                    <option value="Second">Second Semester</option>
+                                </FormSelect>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Duration (hours)</label>
+                                <FormInput type="number" step="0.5" placeholder="e.g. 2" value={forms.course.duration} onChange={(e) => updateForm('course', 'duration', e.target.value)} />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Venue</label>
+                                <FormSelect value={forms.course.venue} onChange={(e) => updateForm('course', 'venue', e.target.value)}>
+                                    <option value="">Unassigned</option>
+                                    {venues.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
+                                </FormSelect>
+                            </div>
+                            <div className="flex items-end pb-1">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={forms.course.is_compulsory}
+                                        onChange={(e) => updateForm('course', 'is_compulsory', e.target.checked)}
+                                        className="w-5 h-5 text-[#4c1d95] border-slate-300 rounded"
+                                    />
+                                    <span className="text-sm font-medium text-slate-700">Compulsory</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        {/* Lecturers */}
+                        <div className="mt-4">
+                            <label className="block text-sm font-medium text-slate-700 mb-2">Lecturers</label>
+                            {lecturers.length > 0 ? (
+                                <div className="border rounded-lg p-2 max-h-28 overflow-y-auto bg-white">
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                        {lecturers.map(l => (
+                                            <label key={l.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-slate-50 p-1 rounded">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={forms.course.lecturers.includes(l.name)}
+                                                    onChange={() => handleCourseLecturerToggle(l.name)}
+                                                    className="w-4 h-4 text-[#4c1d95] border-slate-300 rounded"
+                                                />
+                                                <span className="truncate">{l.name}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            ) : (
+                                <FormInput
+                                    value={lecturerText}
+                                    onChange={(e) => setLecturerText(e.target.value)}
+                                    onBlur={(e) => setForms(prev => ({ ...prev, course: { ...prev.course, lecturers: e.target.value.split(',').map(l => l.trim()).filter(Boolean) } }))}
+                                    placeholder="Enter lecturer names separated by commas"
+                                />
+                            )}
+                        </div>
+
+                        <div className="mt-4 flex gap-2">
+                            <AddButton onClick={submitCourse}>
+                                {editingCourseId ? 'Update Course' : 'Add Course'}
+                            </AddButton>
+                            {editingCourseId && (
+                                <button onClick={cancelCourseEdit} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors">
+                                    Cancel
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Filters */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                        <FormInput
+                            type="text"
+                            value={courseSearch}
+                            onChange={(e) => setCourseSearch(e.target.value)}
+                            placeholder="Search by code or title..."
+                        />
+                        <FormSelect value={courseFilterDept} onChange={(e) => setCourseFilterDept(e.target.value)}>
+                            <option value="">All Departments</option>
+                            {departments.map(d => <option key={d.id} value={d.code}>{d.code}</option>)}
+                        </FormSelect>
+                        <FormSelect value={courseFilterLevel} onChange={(e) => setCourseFilterLevel(e.target.value)}>
+                            <option value="">All Levels</option>
+                            <option value="100">100</option>
+                            <option value="200">200</option>
+                            <option value="300">300</option>
+                            <option value="400">400</option>
+                            <option value="500">500</option>
+                        </FormSelect>
+                    </div>
+
+                    {/* Courses Table */}
+                    {filteredCourses.length === 0 ? (
+                        <EmptyState icon="📋" message="No assigned courses found" />
                     ) : (
                         <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead>
+                                    <tr className="border-b border-slate-200">
+                                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Code</th>
+                                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase min-w-[180px]">Title</th>
+                                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Dept</th>
+                                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Level</th>
+                                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Type</th>
+                                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Timetable</th>
+                                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-600 uppercase w-32">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {filteredCourses.map(course => (
+                                        <tr key={course.id} className="hover:bg-slate-50">
+                                            <td className="py-3 px-4">
+                                                <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-bold rounded">{course.code}</span>
+                                            </td>
+                                            <td className="py-3 px-4 text-slate-800 font-medium whitespace-normal break-words">{course.title}</td>
+                                            <td className="py-3 px-4">
+                                                <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs rounded">{course.department}</span>
+                                            </td>
+                                            <td className="py-3 px-4 text-slate-600">{course.level}</td>
+                                            <td className="py-3 px-4">
+                                                <span className={`px-2 py-1 text-xs rounded ${
+                                                    course.type === 'Lecture' ? 'bg-emerald-100 text-emerald-700' :
+                                                    course.type === 'Exam' ? 'bg-purple-100 text-purple-700' :
+                                                    'bg-amber-100 text-amber-700'
+                                                }`}>{course.type}</span>
+                                            </td>
+                                            <td className="py-3 px-4 text-slate-500 text-sm">{getTimetableName(course.timetable_id)}</td>
+                                            <td className="py-3 px-4 text-right">
+                                                <div className="flex justify-end gap-2">
+                                                    <button
+                                                        onClick={() => editCourse(course)}
+                                                        className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                                                    >
+                                                        Edit
+                                                    </button>
+                                                    <DeleteButton onClick={() => deleteCourse(course.id)} />
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </SectionCard>
+            )}
+
+            {/* Rules Section */}
+            {activeTab === 'rules' && (
+                <SectionCard title="Scheduling Rules" subtitle="Step 6 — Constraints and preferences the scheduler must respect when generating timetables, such as restricted days, break times, and max hours per day.">
+                    {/* Add Rule Form */}
+                    <AddRuleForm onCreate={createRule} />
+
+                    {rules.length === 0 ? (
+                        <EmptyState icon="⚙️" message="No scheduling rules configured yet. Add your first rule above." />
+                    ) : (
+                        <div className="overflow-x-auto mt-4">
                             <table className="w-full">
                                 <thead>
                                     <tr className="border-b border-slate-200">
@@ -1397,37 +1859,37 @@ const AdminManager = () => {
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Key</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Value</th>
                                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-600 uppercase">Status</th>
-                                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-600 uppercase w-20">Action</th>
+                                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-600 uppercase w-28">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {rules.map(rule => (
                                         <tr key={rule.id} className="hover:bg-slate-50">
                                             <td className="py-3 px-4 text-slate-800 font-medium">
-                                                <input 
-                                                    className="w-full px-2 py-1 bg-transparent border border-transparent hover:border-slate-200 rounded focus:border-[#4c1d95] focus:ring-1 focus:ring-[#4c1d95] text-sm" 
-                                                    value={rule.name} 
-                                                    onChange={(e) => setRules(prev => prev.map(r => r.id === rule.id ? { ...r, name: e.target.value } : r))} 
+                                                <input
+                                                    className="w-full px-2 py-1 bg-transparent border border-transparent hover:border-slate-200 rounded focus:border-[#4c1d95] focus:ring-1 focus:ring-[#4c1d95] text-sm"
+                                                    value={rule.name}
+                                                    onChange={(e) => setRules(prev => prev.map(r => r.id === rule.id ? { ...r, name: e.target.value } : r))}
                                                 />
                                             </td>
                                             <td className="py-3 px-4">
-                                                <input 
-                                                    className="w-full px-2 py-1 bg-transparent border border-transparent hover:border-slate-200 rounded focus:border-[#4c1d95] focus:ring-1 focus:ring-[#4c1d95] text-sm font-mono text-xs" 
-                                                    value={rule.rule_key} 
-                                                    onChange={(e) => setRules(prev => prev.map(r => r.id === rule.id ? { ...r, rule_key: e.target.value } : r))} 
+                                                <input
+                                                    className="w-full px-2 py-1 bg-transparent border border-transparent hover:border-slate-200 rounded focus:border-[#4c1d95] focus:ring-1 focus:ring-[#4c1d95] text-sm font-mono text-xs"
+                                                    value={rule.rule_key}
+                                                    onChange={(e) => setRules(prev => prev.map(r => r.id === rule.id ? { ...r, rule_key: e.target.value } : r))}
                                                 />
                                             </td>
                                             <td className="py-3 px-4">
-                                                <input 
-                                                    className="w-full px-2 py-1 bg-transparent border border-transparent hover:border-slate-200 rounded focus:border-[#4c1d95] focus:ring-1 focus:ring-[#4c1d95] text-sm font-mono text-xs" 
-                                                    value={rule.rule_value} 
-                                                    onChange={(e) => setRules(prev => prev.map(r => r.id === rule.id ? { ...r, rule_value: e.target.value } : r))} 
+                                                <input
+                                                    className="w-full px-2 py-1 bg-transparent border border-transparent hover:border-slate-200 rounded focus:border-[#4c1d95] focus:ring-1 focus:ring-[#4c1d95] text-sm font-mono text-xs"
+                                                    value={rule.rule_value}
+                                                    onChange={(e) => setRules(prev => prev.map(r => r.id === rule.id ? { ...r, rule_value: e.target.value } : r))}
                                                 />
                                             </td>
                                             <td className="py-3 px-4">
-                                                <select 
-                                                    className="px-2 py-1 bg-slate-50 border border-slate-200 rounded text-sm" 
-                                                    value={rule.is_active} 
+                                                <select
+                                                    className="px-2 py-1 bg-slate-50 border border-slate-200 rounded text-sm"
+                                                    value={rule.is_active}
                                                     onChange={(e) => setRules(prev => prev.map(r => r.id === rule.id ? { ...r, is_active: Number(e.target.value) } : r))}
                                                 >
                                                     <option value={1}>Active</option>
@@ -1435,12 +1897,15 @@ const AdminManager = () => {
                                                 </select>
                                             </td>
                                             <td className="py-3 px-4 text-right">
-                                                <button 
-                                                    className="bg-[#059669] hover:bg-[#047857] text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-                                                    onClick={() => updateRule(rule)}
-                                                >
-                                                    Save
-                                                </button>
+                                                <div className="flex justify-end gap-2">
+                                                    <button
+                                                        className="bg-[#059669] hover:bg-[#047857] text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                                                        onClick={() => updateRule(rule)}
+                                                    >
+                                                        Save
+                                                    </button>
+                                                    <DeleteButton onClick={() => deleteRule(rule.id)} />
+                                                </div>
                                             </td>
                                         </tr>
                                     ))}

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, Link, NavLink, Navigate, useNavigate } from 'react-router-dom';
+import { Routes, Route, Link, NavLink, Navigate, useNavigate, useParams } from 'react-router-dom';
 import TimetableList from './components/TimetableList';
 import TimetableView from './components/TimetableView';
 import StudentPortal from './components/StudentPortal';
 import AdminManager from './components/AdminManager';
 import AdminLogin from './components/AdminLogin';
 import AuditLog from './components/AuditLog';
+import Dashboard from './components/Dashboard';
 import { isAdminAuthenticated, clearAdminKey, subscribeToAuthChanges } from './adminAuth';
 import mtuLogo from "../../mtulogo.jpg";
 
@@ -15,6 +16,25 @@ const AdminRoute = ({ children }) => {
     return <Navigate to="/admin-login" replace />;
   }
   return children;
+};
+
+/** Wraps Dashboard (course entry, catalogue import, custom fields) for a specific timetable. */
+const TimetableCourses = () => {
+  const { id } = useParams();
+  return (
+    <div>
+      <Link
+        to={`/timetable/${id}`}
+        className="inline-flex items-center text-sm text-slate-500 hover:text-[#4c1d95] mb-4 transition-colors"
+      >
+        <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+        </svg>
+        Back to timetable
+      </Link>
+      <Dashboard timetableId={id} />
+    </div>
+  );
 };
 
 const AdminNav = ({ isAdmin }) => {
@@ -80,22 +100,6 @@ function App() {
               {isAdmin && (
                 <>
                   <NavLink
-                    to="/"
-                    className={({ isActive }) =>
-                      `px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
-                        isActive
-                          ? 'bg-white/15 text-white'
-                          : 'text-white/80 hover:text-white hover:bg-white/10'
-                      }`
-                    }
-                    end
-                  >
-                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                    </svg>
-                    <span className="hidden sm:inline">Dashboard</span>
-                  </NavLink>
-                  <NavLink
                     to="/admin"
                     className={({ isActive }) =>
                       `px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
@@ -110,6 +114,22 @@ function App() {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
                     <span className="hidden sm:inline">Setup</span>
+                  </NavLink>
+                  <NavLink
+                    to="/"
+                    className={({ isActive }) =>
+                      `px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
+                        isActive
+                          ? 'bg-white/15 text-white'
+                          : 'text-white/80 hover:text-white hover:bg-white/10'
+                      }`
+                    }
+                    end
+                  >
+                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <span className="hidden sm:inline">Timetables</span>
                   </NavLink>
                   <NavLink
                     to="/audit-log"
@@ -163,6 +183,7 @@ function App() {
           {/* Protected admin routes */}
           <Route path="/" element={<AdminRoute><TimetableList /></AdminRoute>} />
           <Route path="/timetable/:id" element={<AdminRoute><TimetableView /></AdminRoute>} />
+          <Route path="/timetable/:id/courses" element={<AdminRoute><TimetableCourses /></AdminRoute>} />
           <Route path="/admin" element={<AdminRoute><AdminManager /></AdminRoute>} />
           <Route path="/audit-log" element={<AdminRoute><AuditLog /></AdminRoute>} />
 

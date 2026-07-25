@@ -93,7 +93,7 @@ const TimetableView = () => {
     const [scheduled, setScheduled] = useState([]);
     const [unscheduled, setUnscheduled] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [viewMode, setViewMode] = useState('timetable'); // 'timetable' or 'assign'
+    const [viewMode, setViewMode] = useState('assign'); // 'timetable' or 'assign' — default assign so new timetables land on the right step
     const [masterCourses, setMasterCourses] = useState([]);
     const [assignedCourseIds, setAssignedCourseIds] = useState(new Set());
     const [poolLoading, setPoolLoading] = useState(false);
@@ -106,6 +106,9 @@ const TimetableView = () => {
     const [conflicts, setConflicts] = useState(null);
     const [conflictsLoading, setConflictsLoading] = useState(false);
     const [showConflicts, setShowConflicts] = useState(false);
+    const [qualityReport, setQualityReport] = useState(null);
+    const [showReport, setShowReport] = useState(false);
+    const [reoptimizing, setReoptimizing] = useState(false);
     const previousSignatureRef = useRef('');
     const pendingDataRef = useRef(null);   // incoming server state not yet applied to grid
     const isDirtyRef = useRef(false);      // user has uncommitted local edits
@@ -245,9 +248,21 @@ const TimetableView = () => {
         e.preventDefault();
     };
 
+    // dataTransfer may hold arbitrary content (e.g. text or files dragged from
+    // outside the app) — never let a malformed payload throw inside a drop handler.
+    const parseDraggedCourse = (e) => {
+        try {
+            const raw = e.dataTransfer.getData('course');
+            return raw ? JSON.parse(raw) : null;
+        } catch {
+            return null;
+        }
+    };
+
     const handleDropToUnscheduled = async (e) => {
         e.preventDefault();
-        const course = JSON.parse(e.dataTransfer.getData('course'));
+        const course = parseDraggedCourse(e);
+        if (!course) return;
         const source = e.dataTransfer.getData('source');
         if (source !== 'scheduled') return; // Already unscheduled, nothing to do
 
@@ -272,7 +287,8 @@ const TimetableView = () => {
 
     const handleDrop = async (e, day, time) => {
         e.preventDefault();
-        const course = JSON.parse(e.dataTransfer.getData('course'));
+        const course = parseDraggedCourse(e);
+        if (!course) return;
         const source = e.dataTransfer.getData('source');
 
         // Optimistic update? No, let's validate first.
@@ -285,33 +301,51 @@ const TimetableView = () => {
             const result = await response.json();
 
             if (result.valid) {
-                // Update state
+                // Build the new state with the locked course in its new position
                 let newScheduled = [...scheduled];
                 let newUnscheduled = [...unscheduled];
 
-                // Remove from old position if it was scheduled
                 if (source === 'scheduled') {
                     newScheduled = newScheduled.filter(c => c.code !== course.code || c.day !== course.day || c.time !== course.time);
                 } else {
                     newUnscheduled = newUnscheduled.filter(c => c.code !== course.code);
                 }
+                const lockedCourse = { ...course, day, time, venue: course.venue || 'Unassigned' };
+                newScheduled.push(lockedCourse);
 
-                // Add to new position
-                newScheduled.push({ ...course, day, time, venue: course.venue || 'Unassigned' });
-
+                // Optimistic UI update
                 setScheduled(newScheduled);
                 setUnscheduled(newUnscheduled);
                 isDirtyRef.current = true;
 
-                // Save changes
-                await fetch(`${API_BASE_URL}/timetables/${timetableId}/save`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-                    body: JSON.stringify({ scheduled: newScheduled, unscheduled: newUnscheduled })
-                });
-                isDirtyRef.current = false;
-                pendingDataRef.current = null;
-                setActionNotice({ message: 'Course moved successfully.', type: 'success' });
+                // Re-run ALNS on the affected subset to fix any new conflicts
+                setReoptimizing(true);
+                try {
+                    const reoptRes = await fetch(`${API_BASE_URL}/timetables/${timetableId}/reoptimize`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                        body: JSON.stringify({ lockedCourse, scheduled: newScheduled, unscheduled: newUnscheduled })
+                    });
+                    if (reoptRes.ok) {
+                        const reoptData = await reoptRes.json();
+                        setScheduled(reoptData.data.scheduled);
+                        setUnscheduled(reoptData.data.unscheduled);
+                        if (reoptData.report) setQualityReport(reoptData.report);
+                        setActionNotice({ message: 'Course moved and schedule re-optimised.', type: 'success' });
+                    } else {
+                        // Reoptimize failed — fall back to plain save
+                        await fetch(`${API_BASE_URL}/timetables/${timetableId}/save`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                            body: JSON.stringify({ scheduled: newScheduled, unscheduled: newUnscheduled })
+                        });
+                        setActionNotice({ message: 'Course moved successfully.', type: 'success' });
+                    }
+                } finally {
+                    setReoptimizing(false);
+                    isDirtyRef.current = false;
+                    pendingDataRef.current = null;
+                }
             } else {
                 setActionNotice({ message: 'Conflict detected. Cannot move course here.', type: 'error' });
             }
@@ -445,6 +479,12 @@ const TimetableView = () => {
     };
 
     const handleGenerate = async () => {
+        if (scheduled.length > 0) {
+            const confirmed = window.confirm(
+                'This will overwrite the current schedule, including any manual adjustments you have made. Continue?'
+            );
+            if (!confirmed) return;
+        }
         try {
             setPoolLoading(true);
             const typeEndpoint = timetable?.type ? timetable.type.toLowerCase() + 's' : 'lectures';
@@ -462,6 +502,11 @@ const TimetableView = () => {
                 throw new Error(errorData.error || 'Generation failed');
             }
 
+            const result = await response.json();
+            if (result.report) {
+                setQualityReport(result.report);
+                setShowReport(true);
+            }
             setActionNotice({ message: 'Timetable generated successfully!', type: 'success' });
             setViewMode('timetable');
             fetchTimetable();
@@ -545,7 +590,7 @@ const TimetableView = () => {
                             <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
                             </svg>
-                            Back to List
+                            Timetables
                         </Link>
                         <h1 className="text-2xl lg:text-3xl font-bold text-slate-900">{timetable.name}</h1>
                         <p className="text-slate-500 mt-1">
@@ -565,83 +610,100 @@ const TimetableView = () => {
                         )}
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                        <button
-                            onClick={() => {
-                                setViewMode('timetable');
-                                fetchTimetable();
-                            }}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                                viewMode === 'timetable' 
-                                    ? 'bg-[#4c1d95] text-white shadow-md' 
-                                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                            }`}
-                        >
-                            <span className="flex items-center gap-2">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                </svg>
-                                View Timetable
-                            </span>
-                        </button>
-                        <button
-                            onClick={() => setViewMode('assign')}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                                viewMode === 'assign'
-                                    ? 'bg-[#4c1d95] text-white shadow-md'
-                                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                            }`}
-                        >
-                            <span className="flex items-center gap-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                        {/* View tabs */}
+                        <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+                            <button
+                                onClick={() => setViewMode('assign')}
+                                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                                    viewMode === 'assign'
+                                        ? 'bg-white text-[#4c1d95] shadow-sm'
+                                        : 'text-slate-600 hover:text-slate-900'
+                                }`}
+                            >
+                                <span className="flex items-center gap-1.5">
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                                    </svg>
+                                    Assign Courses
+                                </span>
+                            </button>
+                            <button
+                                onClick={() => { setViewMode('timetable'); fetchTimetable(); }}
+                                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                                    viewMode === 'timetable'
+                                        ? 'bg-white text-[#4c1d95] shadow-sm'
+                                        : 'text-slate-600 hover:text-slate-900'
+                                }`}
+                            >
+                                <span className="flex items-center gap-1.5">
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                    </svg>
+                                    View Timetable
+                                </span>
+                            </button>
+                        </div>
+
+                        {/* Action buttons */}
+                        <div className="flex items-center gap-2 sm:ml-2">
+                            <Link
+                                to={`/timetable/${timetableId}/courses`}
+                                title="Add courses manually, import from the course catalogue, or manage custom fields"
+                                className="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 shadow-sm bg-[#4c1d95] text-white hover:bg-[#5b21b6] hover:shadow-md"
+                            >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                                 </svg>
-                                Assign Courses
-                            </span>
-                        </button>
-                        <button
-                            onClick={handleGenerate}
-                            disabled={poolLoading || assignedCourseIds.size === 0}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 shadow-sm ${
-                                poolLoading || assignedCourseIds.size === 0
-                                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                                    : 'bg-emerald-600 text-white hover:bg-emerald-700 hover:shadow-md'
-                            }`}
-                        >
-                            {poolLoading ? (
-                                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
-                                </svg>
-                            ) : (
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/>
-                                </svg>
+                                Add Courses
+                            </Link>
+                            <button
+                                onClick={handleGenerate}
+                                disabled={poolLoading || assignedCourseIds.size === 0}
+                                title={assignedCourseIds.size === 0 ? 'Assign at least one course before generating' : 'Generate the timetable schedule'}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 shadow-sm ${
+                                    poolLoading || assignedCourseIds.size === 0
+                                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                        : 'bg-emerald-600 text-white hover:bg-emerald-700 hover:shadow-md'
+                                }`}
+                            >
+                                {poolLoading ? (
+                                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                                    </svg>
+                                ) : (
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/>
+                                    </svg>
+                                )}
+                                Generate
+                            </button>
+                            {!isTimetableEmpty && (
+                                <button
+                                    onClick={handleCheckConflicts}
+                                    disabled={conflictsLoading}
+                                    className="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 shadow-sm bg-orange-500 text-white hover:bg-orange-600 hover:shadow-md disabled:opacity-50"
+                                >
+                                    {conflictsLoading ? (
+                                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                                        </svg>
+                                    ) : (
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                        </svg>
+                                    )}
+                                    Conflicts
+                                    {conflicts !== null && (
+                                        <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${conflicts.length > 0 ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'}`}>
+                                            {conflicts.length}
+                                        </span>
+                                    )}
+                                </button>
                             )}
-                            Generate Timetable
-                        </button>
-                        <button
-                            onClick={handleCheckConflicts}
-                            disabled={conflictsLoading}
-                            className="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 shadow-sm bg-orange-500 text-white hover:bg-orange-600 hover:shadow-md disabled:opacity-50"
-                        >
-                            {conflictsLoading ? (
-                                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
-                                </svg>
-                            ) : (
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                                </svg>
-                            )}
-                            Check Conflicts
-                            {conflicts !== null && (
-                                <span className={`ml-1 px-1.5 py-0.5 rounded-full text-xs font-bold ${conflicts.length > 0 ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'}`}>
-                                    {conflicts.length}
-                                </span>
-                            )}
-                        </button>
+                        </div>
                     </div>
                 </div>
 
@@ -669,8 +731,108 @@ const TimetableView = () => {
                     </div>
                 )}
 
-                {/* Export Controls */}
-                <div className="mt-6 pt-6 border-t border-slate-100 flex flex-wrap items-center gap-3">
+                {/* Re-optimising indicator */}
+                {reoptimizing && (
+                    <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-3 text-sm text-blue-700">
+                        <svg className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                        </svg>
+                        Re-optimising affected courses…
+                    </div>
+                )}
+
+                {/* Quality Report Panel */}
+                {qualityReport && showReport && (
+                    <div className="mt-4 p-4 rounded-xl border bg-slate-50 border-slate-200">
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="font-semibold text-sm text-slate-700 flex items-center gap-2">
+                                Schedule Quality Report
+                                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                                    qualityReport.score.conflicts === 0
+                                        ? 'bg-green-100 text-green-700'
+                                        : 'bg-red-100 text-red-700'
+                                }`}>
+                                    {qualityReport.score.conflicts === 0 ? 'No conflicts' : `${qualityReport.score.conflicts} conflict${qualityReport.score.conflicts !== 1 ? 's' : ''}`}
+                                </span>
+                            </h3>
+                            <button onClick={() => setShowReport(false)} className="text-slate-400 hover:text-slate-600 text-xs">Dismiss</button>
+                        </div>
+
+                        {/* Summary row */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                            {[
+                                { label: 'Scheduled',    value: qualityReport.totalScheduled,          color: 'text-emerald-700', bg: 'bg-emerald-50' },
+                                { label: 'Unscheduled',  value: qualityReport.totalUnscheduled,         color: 'text-amber-700',   bg: 'bg-amber-50'   },
+                                { label: 'Overloaded days', value: qualityReport.score.overloaded,      color: qualityReport.score.overloaded > 0 ? 'text-red-700' : 'text-slate-500', bg: qualityReport.score.overloaded > 0 ? 'bg-red-50' : 'bg-slate-100' },
+                                { label: 'Back-to-back', value: qualityReport.score.backToBack,         color: qualityReport.score.backToBack > 0 ? 'text-orange-700' : 'text-slate-500', bg: qualityReport.score.backToBack > 0 ? 'bg-orange-50' : 'bg-slate-100' },
+                            ].map(({ label, value, color, bg }) => (
+                                <div key={label} className={`${bg} rounded-lg p-3 text-center`}>
+                                    <div className={`text-2xl font-bold ${color}`}>{value}</div>
+                                    <div className="text-xs text-slate-500 mt-0.5">{label}</div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Hard conflicts */}
+                        {qualityReport.hardConflicts.length > 0 && (
+                            <div className="mb-3">
+                                <p className="text-xs font-semibold text-red-700 mb-1">Hard Conflicts</p>
+                                <ul className="space-y-1 max-h-32 overflow-y-auto">
+                                    {qualityReport.hardConflicts.map((c, i) => (
+                                        <li key={i} className="text-xs text-red-600 flex items-center gap-2">
+                                            <span className="px-1.5 py-0.5 bg-red-100 rounded font-mono">{c.courseA} ↔ {c.courseB}</span>
+                                            <span className="text-slate-500">{c.day} {c.time} — {c.types.join(', ')}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+
+                        {/* Overloaded days */}
+                        {qualityReport.overloadedDays.length > 0 && (
+                            <div className="mb-3">
+                                <p className="text-xs font-semibold text-orange-700 mb-1">Overloaded Days</p>
+                                <ul className="space-y-1 max-h-24 overflow-y-auto">
+                                    {qualityReport.overloadedDays.map((d, i) => (
+                                        <li key={i} className="text-xs text-orange-600">
+                                            {d.department} L{d.level} — {d.day}: {d.hours}h (max {d.maxHours}h)
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+
+                        {/* Back-to-back */}
+                        {qualityReport.backToBack.length > 0 && (
+                            <div>
+                                <p className="text-xs font-semibold text-slate-600 mb-1">Back-to-back Sessions</p>
+                                <ul className="space-y-1 max-h-24 overflow-y-auto">
+                                    {qualityReport.backToBack.map((b, i) => (
+                                        <li key={i} className="text-xs text-slate-500">
+                                            {b.lecturer} — {b.day}: {b.sessions.map(s => s.code).join(' → ')} ({b.totalHours}h continuous)
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Show report button if report exists but was dismissed */}
+                {qualityReport && !showReport && (
+                    <div className="mt-3">
+                        <button
+                            onClick={() => setShowReport(true)}
+                            className="text-xs text-slate-500 hover:text-slate-700 underline"
+                        >
+                            Show quality report
+                        </button>
+                    </div>
+                )}
+
+                {/* Export Controls — only shown when the timetable has been generated */}
+                {!isTimetableEmpty && <div className="mt-6 pt-6 border-t border-slate-100 flex flex-wrap items-center gap-3">
                     <span className="text-sm font-medium text-slate-600">Export:</span>
                     <select 
                         value={exportFormat} 
@@ -710,7 +872,7 @@ const TimetableView = () => {
                         </svg>
                         Export
                     </button>
-                </div>
+                </div>}
             </div>
 
             {
@@ -723,6 +885,7 @@ const TimetableView = () => {
                         onRemove={handleRemoveCourse}
                         onGenerate={handleGenerate}
                         loading={poolLoading}
+                        onCourseAdded={fetchPoolData}
                     />
                 ) : (
                     <>
@@ -813,6 +976,11 @@ const TimetableView = () => {
                                                         <div className="text-xs text-slate-400 mt-1 flex items-center gap-2">
                                                             <span>{course.duration / 60}h</span>
                                                         </div>
+                                                        {course.unscheduledReason && (
+                                                            <div className="text-[10px] text-amber-600 mt-1 leading-tight" title={course.unscheduledReason}>
+                                                                ⚠ {course.unscheduledReason}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 ))
                                             )}
@@ -993,10 +1161,66 @@ const TimetableView = () => {
     );
 };
 
+const emptyNewCourse = {
+    code: '', title: '', department: '', level: '', units: '', semester: 'First',
+    type: 'Lecture', duration: 1, is_compulsory: false, preferred_day: 'AUTO',
+    preferred_time: 'AUTO', venue: '', lecturers: []
+};
+
 // Course Assignment Panel Component
-const CourseAssignmentPanel = ({ timetableId, masterCourses, assignedCourseIds, onAssign, onRemove, onGenerate, loading }) => {
+const CourseAssignmentPanel = ({ timetableId, masterCourses, assignedCourseIds, onAssign, onRemove, loading, onCourseAdded }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterDept, setFilterDept] = useState('');
+    const [showAddForm, setShowAddForm] = useState(false);
+    const [newCourse, setNewCourse] = useState(emptyNewCourse);
+    const [addLoading, setAddLoading] = useState(false);
+    const [options, setOptions] = useState({ departments: [], venues: [], lecturers: [] });
+    const [assignAfterAdd, setAssignAfterAdd] = useState(true);
+
+    useEffect(() => {
+        if (!showAddForm || options.departments.length > 0) return;
+        fetch(`${API_BASE_URL}/options`)
+            .then(r => r.json())
+            .then(d => setOptions(d.data || { departments: [], venues: [], lecturers: [] }))
+            .catch(() => {});
+    }, [showAddForm]);
+
+    const handleAddToCourse = async (e) => {
+        e.preventDefault();
+        if (!newCourse.code || !newCourse.title || !newCourse.department || !newCourse.level) return;
+        setAddLoading(true);
+        try {
+            const res = await fetch(`${API_BASE_URL}/courses`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                body: JSON.stringify({
+                    ...newCourse,
+                    level: parseInt(newCourse.level),
+                    units: parseInt(newCourse.units) || null,
+                    duration: parseFloat(newCourse.duration),
+                    // no timetable_id → goes to master pool
+                })
+            });
+            if (!res.ok) throw new Error((await res.json()).error || 'Failed');
+            const created = await res.json();
+
+            if (assignAfterAdd && created.id) {
+                await fetch(`${API_BASE_URL}/timetables/${timetableId}/courses`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+                    body: JSON.stringify({ course_id: created.id })
+                });
+            }
+
+            setNewCourse(emptyNewCourse);
+            setShowAddForm(false);
+            onCourseAdded();
+        } catch (err) {
+            alert(err.message);
+        } finally {
+            setAddLoading(false);
+        }
+    };
 
     const departments = [...new Set(masterCourses.map(c => c.department))].sort();
 
@@ -1015,12 +1239,109 @@ const CourseAssignmentPanel = ({ timetableId, masterCourses, assignedCourseIds, 
         <div className="space-y-6">
             {/* Header */}
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-                <div>
-                    <h2 className="text-lg font-semibold text-slate-800">Assign Courses from Pool</h2>
-                    <p className="text-slate-500 text-sm mt-1">
-                        Add courses from the master pool to this timetable, then generate the schedule.
-                    </p>
+                <div className="flex items-start justify-between gap-4">
+                    <div>
+                        <h2 className="text-lg font-semibold text-slate-800">Assign Courses from Pool</h2>
+                        <p className="text-slate-500 text-sm mt-1">
+                            Add courses from the master pool to this timetable, then generate the schedule.
+                        </p>
+                    </div>
+                    <button
+                        onClick={() => setShowAddForm(v => !v)}
+                        className={`flex-shrink-0 flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                            showAddForm ? 'bg-slate-200 text-slate-700' : 'bg-[#4c1d95] text-white hover:bg-[#3b0764]'
+                        }`}
+                    >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={showAddForm ? 'M6 18L18 6M6 6l12 12' : 'M12 4v16m8-8H4'} />
+                        </svg>
+                        {showAddForm ? 'Cancel' : 'Add to Pool'}
+                    </button>
                 </div>
+
+                {/* Quick-add form */}
+                {showAddForm && (
+                    <form onSubmit={handleAddToCourse} className="mt-6 pt-6 border-t border-slate-100">
+                        <h3 className="text-sm font-semibold text-slate-700 mb-4">New Course — adds to pool{assignAfterAdd ? ' and assigns here' : ''}</h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                            <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">Code *</label>
+                                <input required value={newCourse.code} onChange={e => setNewCourse(p => ({ ...p, code: e.target.value }))}
+                                    placeholder="e.g. CSC 101"
+                                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent" />
+                            </div>
+                            <div className="sm:col-span-2">
+                                <label className="block text-xs font-medium text-slate-600 mb-1">Title *</label>
+                                <input required value={newCourse.title} onChange={e => setNewCourse(p => ({ ...p, title: e.target.value }))}
+                                    placeholder="e.g. Introduction to Computer Science"
+                                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">Department *</label>
+                                <select required value={newCourse.department} onChange={e => setNewCourse(p => ({ ...p, department: e.target.value }))}
+                                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent">
+                                    <option value="">Select…</option>
+                                    {options.departments.map(d => <option key={d.code} value={d.code}>{d.code} — {d.name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">Level *</label>
+                                <select required value={newCourse.level} onChange={e => setNewCourse(p => ({ ...p, level: e.target.value }))}
+                                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent">
+                                    <option value="">Select…</option>
+                                    {['100','200','300','400','500'].map(l => <option key={l} value={l}>{l}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">Units</label>
+                                <input type="number" value={newCourse.units} onChange={e => setNewCourse(p => ({ ...p, units: e.target.value }))}
+                                    placeholder="e.g. 3"
+                                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">Semester</label>
+                                <select value={newCourse.semester} onChange={e => setNewCourse(p => ({ ...p, semester: e.target.value }))}
+                                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent">
+                                    <option value="First">First</option>
+                                    <option value="Second">Second</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">Type</label>
+                                <select value={newCourse.type} onChange={e => setNewCourse(p => ({ ...p, type: e.target.value }))}
+                                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent">
+                                    <option value="Lecture">Lecture</option>
+                                    <option value="Exam">Exam</option>
+                                    <option value="Test">Test</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">Duration (hours)</label>
+                                <input type="number" step="0.5" min="0.5" value={newCourse.duration} onChange={e => setNewCourse(p => ({ ...p, duration: e.target.value }))}
+                                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">Venue (optional)</label>
+                                <select value={newCourse.venue} onChange={e => setNewCourse(p => ({ ...p, venue: e.target.value }))}
+                                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#4c1d95] focus:border-transparent">
+                                    <option value="">Unassigned</option>
+                                    {options.venues.map(v => <option key={v.name} value={v.name}>{v.name}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        <div className="mt-4 flex flex-wrap items-center gap-4">
+                            <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+                                <input type="checkbox" checked={assignAfterAdd} onChange={e => setAssignAfterAdd(e.target.checked)}
+                                    className="w-4 h-4 text-[#4c1d95] border-slate-300 rounded" />
+                                Also assign to this timetable immediately
+                            </label>
+                            <button type="submit" disabled={addLoading}
+                                className="ml-auto px-5 py-2 bg-[#4c1d95] text-white rounded-lg text-sm font-medium hover:bg-[#3b0764] transition-colors disabled:opacity-50">
+                                {addLoading ? 'Adding…' : 'Add Course'}
+                            </button>
+                        </div>
+                    </form>
+                )}
             </div>
 
             {/* Filters */}

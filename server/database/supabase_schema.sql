@@ -80,6 +80,17 @@ create table if not exists public.courses (
 alter table public.courses
     add column if not exists is_compulsory boolean not null default false;
 
+create table if not exists public.timetable_courses (
+    id bigint generated always as identity primary key,
+    timetable_id bigint not null references public.timetables(id) on delete cascade,
+    course_id bigint not null references public.courses(id) on delete cascade,
+    created_at timestamptz not null default now(),
+    unique (timetable_id, course_id)
+);
+
+create index if not exists idx_timetable_courses_timetable_id on public.timetable_courses (timetable_id);
+create index if not exists idx_timetable_courses_course_id on public.timetable_courses (course_id);
+
 create table if not exists public.custom_fields (
     id bigint generated always as identity primary key,
     name text not null unique,
@@ -134,6 +145,23 @@ create table if not exists public.audit_log (
 );
 
 create index if not exists idx_audit_log_created_at on public.audit_log (created_at desc);
+
+-- Enable RLS on all tables. The server connects with the service_role key
+-- (see supabaseAdapter.js), which bypasses RLS, so the app keeps working
+-- without any policies; this only blocks anon/authenticated access.
+alter table public.colleges enable row level security;
+alter table public.departments enable row level security;
+alter table public.lecturers enable row level security;
+alter table public.venues enable row level security;
+alter table public.scheduling_rules enable row level security;
+alter table public.timetables enable row level security;
+alter table public.courses enable row level security;
+alter table public.custom_fields enable row level security;
+alter table public.students enable row level security;
+alter table public.student_courses enable row level security;
+alter table public.student_results enable row level security;
+alter table public.audit_log enable row level security;
+alter table public.timetable_courses enable row level security;
 
 insert into public.colleges (code, name)
 values

@@ -137,6 +137,7 @@ const duplicateById = async (id) => {
 		academic_session: row.academic_session,
 		semester: row.semester,
 		status: 'Draft',
+		college: row.college,
 		data: toJsonValue(row.data, { scheduled: [], unscheduled: [] })
 	};
 

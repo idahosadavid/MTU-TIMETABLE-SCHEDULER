@@ -225,7 +225,15 @@ const StudentPortal = () => {
                                     <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                     </svg>
-                                    <span>{error}</span>
+                                    <div className="flex-1">
+                                        <span>{error}</span>
+                                        <button
+                                            onClick={() => { setError(''); setPortalRedirectAttempted(false); window.location.reload(); }}
+                                            className="block mt-2 text-red-800 font-semibold underline text-xs hover:no-underline"
+                                        >
+                                            Try again
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         )}

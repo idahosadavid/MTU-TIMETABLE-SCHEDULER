@@ -46,13 +46,13 @@ app.use(cors({
         if (!origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
             return callback(null, true);
         }
-        // Allow any origin in development; tighten this in production via env
         const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-        if (allowedOrigins.includes(origin)) {
+        if (allowedOrigins.length === 0) {
+            // No allowlist configured — permissive (dev). Set CORS_ALLOWED_ORIGINS in production.
             return callback(null, true);
         }
-        // Default: allow all (permissive dev setup)
-        callback(null, true);
+        // Allowlist configured: only listed origins get CORS headers.
+        return callback(null, allowedOrigins.includes(origin));
     },
     credentials: true,
     exposedHeaders: ['Content-Disposition']
@@ -359,6 +359,26 @@ const buildWordGrid = async (rows, title, subtitle1, subtitle2) => {
     return Packer.toBuffer(doc);
 };
 
+// Only expose the fields the client actually needs — the students table may
+// hold more PII than matric/name/department/level.
+const toPublicStudent = (student) => {
+    if (!student) return student;
+    const { matric_number, name, department, level } = student;
+    return { matric_number, name, department, level };
+};
+
+// Quote and sanitize download filenames so names with spaces or special
+// characters can't break (or inject into) the Content-Disposition header.
+const contentDispositionFor = (filename) =>
+    `attachment; filename="${String(filename).replace(/[^\w.\- ]+/g, '_')}"`;
+
+// API accepts course duration in hours; we store minutes. Invalid or missing
+// values fall back to 1 hour instead of persisting NaN.
+const durationHoursToMinutes = (value) => {
+    const hours = parseFloat(value);
+    return Number.isFinite(hours) && hours > 0 ? Math.round(hours * 60) : 60;
+};
+
 const parseVenueSeats = (payload = {}) => {
     const parsed = Number(payload.seats ?? payload.capacity ?? 0);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
@@ -387,7 +407,7 @@ const handleStudentLogin = async (req, res) => {
         if (!student) {
             return res.status(404).json({ error: 'Student not found' });
         }
-        return res.json({ data: student });
+        return res.json({ data: toPublicStudent(student) });
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
@@ -442,8 +462,15 @@ const assertPortalTokenAccess = (req, res) => {
         return false;
     }
 
-    const requestedMatric = decodeURIComponent(req.params.matric_number || '');
-    if (payload.sub !== requestedMatric) {
+    // Express has usually already decoded the param; decode defensively in case
+    // the client double-encoded, but never crash on a literal '%' in the matric.
+    let requestedMatric = req.params.matric_number || '';
+    try {
+        requestedMatric = decodeURIComponent(requestedMatric);
+    } catch {
+        // Already decoded / contains a raw '%' — use as-is.
+    }
+    if (payload.sub !== requestedMatric && payload.sub !== (req.params.matric_number || '')) {
         res.status(403).json({ error: 'Portal session does not match requested student' });
         return false;
     }
@@ -497,16 +524,25 @@ const getStudentTimetablePayload = async (matric_number) => {
         is_carryover: carryoverCodes.includes(course.code)
     }));
 
+    const toMinutes = (t) => {
+        if (!t) return null;
+        const [h, m] = String(t).split(':');
+        const hours = parseInt(h, 10);
+        if (!Number.isFinite(hours)) return null;
+        return hours * 60 + (parseInt(m, 10) || 0);
+    };
+
     for (let i = 0; i < studentSchedule.length; i++) {
         for (let j = i + 1; j < studentSchedule.length; j++) {
             const c1 = studentSchedule[i];
             const c2 = studentSchedule[j];
 
-            if (c1.day === c2.day) {
-                const start1 = parseInt(c1.time.split(':')[0]) * 60 + parseInt(c1.time.split(':')[1] || 0);
-                const end1 = start1 + c1.duration;
-                const start2 = parseInt(c2.time.split(':')[0]) * 60 + parseInt(c2.time.split(':')[1] || 0);
-                const end2 = start2 + c2.duration;
+            if (c1.day && c1.day === c2.day) {
+                const start1 = toMinutes(c1.time);
+                const start2 = toMinutes(c2.time);
+                if (start1 === null || start2 === null) continue;
+                const end1 = start1 + (Number(c1.duration) || 60);
+                const end2 = start2 + (Number(c2.duration) || 60);
 
                 if (start1 < end2 && start2 < end1) {
                     c1.clash_warning = true;
@@ -517,7 +553,7 @@ const getStudentTimetablePayload = async (matric_number) => {
     }
 
     return {
-        student,
+        student: toPublicStudent(student),
         timetable: {
             ...timetableRow,
             data: {
@@ -563,7 +599,12 @@ app.post('/api/student/portal/session', async (req, res) => {
         return res.status(400).json({ error: 'matric_number is required' });
     }
 
-    const ttl = Number(ttl_seconds) > 0 ? Number(ttl_seconds) : DEFAULT_TTL_SECONDS;
+    // Cap requested TTL so a misconfigured caller can't mint near-permanent tokens.
+    const MAX_TTL_SECONDS = 24 * 60 * 60;
+    const requestedTtl = Number(ttl_seconds);
+    const ttl = Number.isFinite(requestedTtl) && requestedTtl > 0
+        ? Math.min(requestedTtl, MAX_TTL_SECONDS)
+        : DEFAULT_TTL_SECONDS;
 
     try {
         let student = await studentsRepo.getByMatric(matric_number);
@@ -690,7 +731,7 @@ app.get(/^\/api\/student\/(.+)\/timetable\/export$/, async (req, res) => {
         if (format === 'excel') {
             const buffer = await buildExcelGrid(rows, `Timetable: ${matric_number}`);
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            res.setHeader('Content-Disposition', `attachment; filename=${baseName}.xlsx`);
+            res.setHeader('Content-Disposition', contentDispositionFor(`${baseName}.xlsx`));
             return res.send(buffer);
         }
 
@@ -703,7 +744,7 @@ app.get(/^\/api\/student\/(.+)\/timetable\/export$/, async (req, res) => {
                 (pdfBuffer) => {
                     if (!res.headersSent) {
                         res.setHeader('Content-Type', 'application/pdf');
-                        res.setHeader('Content-Disposition', `attachment; filename=${baseName}.pdf`);
+                        res.setHeader('Content-Disposition', contentDispositionFor(`${baseName}.pdf`));
                         res.send(pdfBuffer);
                     }
                 },
@@ -723,7 +764,7 @@ app.get(/^\/api\/student\/(.+)\/timetable\/export$/, async (req, res) => {
                 `Department: ${payload.student.department || 'N/A'} | Level: ${payload.student.level || 'N/A'}`
             );
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-            res.setHeader('Content-Disposition', `attachment; filename=${baseName}.docx`);
+            res.setHeader('Content-Disposition', contentDispositionFor(`${baseName}.docx`));
             return res.send(buffer);
         }
 
@@ -803,6 +844,20 @@ app.delete('/api/admin/colleges/:id', requireAdmin, (req, res) => {
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
+app.post('/api/admin/colleges/bulk', requireAdmin, async (req, res) => {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'Expected a non-empty rows array' });
+    const valid = rows.filter(r => r.code && r.name);
+    if (valid.length === 0) return res.status(400).json({ error: 'No valid rows found (code and name required)' });
+    try {
+        const result = await adminRepo.bulkCreateColleges(valid);
+        writeAuditLog('BULK_CREATE', 'college', null, `count=${result.count}`, req.ip);
+        res.json({ message: `${result.count} college(s) imported.`, count: result.count, skipped: rows.length - valid.length });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
 app.get('/api/admin/departments', (req, res) => {
     const { college_code } = req.query;
     adminRepo.listDepartments(college_code || null)
@@ -841,6 +896,30 @@ app.delete('/api/admin/departments/:id', requireAdmin, (req, res) => {
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
+app.post('/api/admin/departments/bulk', requireAdmin, async (req, res) => {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'Expected a non-empty rows array' });
+    // Validate college codes exist
+    const allColleges = await adminRepo.listColleges();
+    const validCodes = new Set(allColleges.map(c => c.code?.trim().toUpperCase()));
+    const valid = [], errors = [];
+    rows.forEach((r, i) => {
+        if (!r.code || !r.name) { errors.push(`Row ${i+1}: code and name are required`); return; }
+        if (r.college_code && !validCodes.has(r.college_code.trim().toUpperCase())) {
+            errors.push(`Row ${i+1} (${r.code}): College "${r.college_code}" does not exist`); return;
+        }
+        valid.push(r);
+    });
+    if (valid.length === 0) return res.status(400).json({ error: 'No valid rows', errors });
+    try {
+        const result = await adminRepo.bulkCreateDepartments(valid);
+        writeAuditLog('BULK_CREATE', 'department', null, `count=${result.count}`, req.ip);
+        res.json({ message: `${result.count} department(s) imported.`, count: result.count, errors });
+    } catch (err) {
+        res.status(400).json({ error: err.message, errors });
+    }
+});
+
 app.get('/api/admin/lecturers', (req, res) => {
     adminRepo.listLecturers()
         .then(rows => res.json({ data: rows }))
@@ -876,6 +955,29 @@ app.delete('/api/admin/lecturers/:id', requireAdmin, (req, res) => {
             res.json({ message: 'Lecturer deleted' });
         })
         .catch(err => res.status(400).json({ error: err.message }));
+});
+
+app.post('/api/admin/lecturers/bulk', requireAdmin, async (req, res) => {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'Expected a non-empty rows array' });
+    const allDepts = await adminRepo.listDepartments(null);
+    const validDeptCodes = new Set(allDepts.map(d => d.code?.trim().toUpperCase()));
+    const valid = [], errors = [];
+    rows.forEach((r, i) => {
+        if (!r.name) { errors.push(`Row ${i+1}: name is required`); return; }
+        if (r.department_code && !validDeptCodes.has(r.department_code.trim().toUpperCase())) {
+            errors.push(`Row ${i+1} (${r.name}): Department "${r.department_code}" does not exist`); return;
+        }
+        valid.push(r);
+    });
+    if (valid.length === 0) return res.status(400).json({ error: 'No valid rows', errors });
+    try {
+        const result = await adminRepo.bulkCreateLecturers(valid);
+        writeAuditLog('BULK_CREATE', 'lecturer', null, `count=${result.count}`, req.ip);
+        res.json({ message: `${result.count} lecturer(s) imported.`, count: result.count, errors });
+    } catch (err) {
+        res.status(400).json({ error: err.message, errors });
+    }
 });
 
 app.get('/api/admin/venues', (req, res) => {
@@ -917,17 +1019,62 @@ app.delete('/api/admin/venues/:id', requireAdmin, (req, res) => {
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
+app.post('/api/admin/venues/bulk', requireAdmin, async (req, res) => {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'Expected a non-empty rows array' });
+    const valid = [], errors = [];
+    rows.forEach((r, i) => {
+        if (!r.name) { errors.push(`Row ${i+1}: name is required`); return; }
+        valid.push(r);
+    });
+    if (valid.length === 0) return res.status(400).json({ error: 'No valid rows', errors });
+    try {
+        const result = await adminRepo.bulkCreateVenues(valid);
+        writeAuditLog('BULK_CREATE', 'venue', null, `count=${result.count}`, req.ip);
+        res.json({ message: `${result.count} venue(s) imported.`, count: result.count, errors });
+    } catch (err) {
+        res.status(400).json({ error: err.message, errors });
+    }
+});
+
+
 app.get('/api/admin/rules', (req, res) => {
     adminRepo.listRules()
         .then(rows => res.json({ data: rows }))
         .catch(err => res.status(500).json({ error: err.message }));
 });
 
+app.post('/api/admin/rules', requireAdmin, (req, res) => {
+    const { name, rule_key, rule_value, is_active = 1 } = req.body;
+    if (!name || !rule_key || rule_value === undefined) {
+        return res.status(400).json({ error: 'name, rule_key, and rule_value are required' });
+    }
+    adminRepo.createRule({ name, rule_key, rule_value, is_active })
+        .then(result => {
+            writeAuditLog('CREATE', 'rule', result.lastID, `key=${rule_key} value=${rule_value}`, req.ip);
+            res.json({ message: 'Rule created', id: result.lastID });
+        })
+        .catch(err => res.status(400).json({ error: err.message }));
+});
+
 app.put('/api/admin/rules/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { name, rule_key, rule_value, is_active = 1 } = req.body;
     adminRepo.updateRule(id, { name, rule_key, rule_value, is_active })
-        .then(() => res.json({ message: 'Rule updated' }))
+        .then(() => {
+            writeAuditLog('UPDATE', 'rule', id, `key=${rule_key} value=${rule_value}`, req.ip);
+            res.json({ message: 'Rule updated' });
+        })
+        .catch(err => res.status(400).json({ error: err.message }));
+});
+
+app.delete('/api/admin/rules/:id', requireAdmin, (req, res) => {
+    const { id } = req.params;
+    adminRepo.deleteRule(id)
+        .then(() => {
+            writeAuditLog('DELETE', 'rule', id, null, req.ip);
+            res.json({ message: 'Rule deleted' });
+        })
         .catch(err => res.status(400).json({ error: err.message }));
 });
 
@@ -1064,8 +1211,7 @@ const autoSyncCoursesFromPortal = async ({ timetable_id, timetableRow, departmen
 // Add a new course
 app.post('/api/courses', requireAdmin, (req, res) => {
     const { code, title, department, level, lecturers, units, semester, type, is_compulsory, preferred_day, preferred_time, venue, duration, custom_data } = req.body;
-    // API accepts duration in hours; store duration in minutes.
-    const durationInMinutes = parseFloat(duration) * 60;
+    const durationInMinutes = durationHoursToMinutes(duration);
     const timetable_id = req.body.timetable_id;
 
     (timetable_id ? timetablesRepo.getRawById(timetable_id) : Promise.resolve(null))
@@ -1115,13 +1261,46 @@ app.post('/api/courses/bulk', requireAdmin, async (req, res) => {
         return res.status(400).json({ error: 'Expected an array of courses' });
     }
 
+    // Pre-load valid reference values so we can validate each row without N+1 queries
+    const [allDepts, allVenues, allLecturers] = await Promise.all([
+        adminRepo.listDepartments(null),
+        adminRepo.listVenues(),
+        adminRepo.listLecturers(),
+    ]);
+    const validDeptCodes = new Set(allDepts.map(d => d.code?.trim().toUpperCase()));
+    const validVenueNames = new Set(allVenues.map(v => v.name?.trim()));
+    const validLecturerNames = new Set(allLecturers.map(l => l.name?.trim()));
+
     let addedCount = 0;
     let errors = [];
 
     for (let i = 0; i < courses.length; i++) {
         const c = courses[i];
         try {
-            const durationInMinutes = parseFloat(c.duration || 1) * 60;
+            // Validate department — required and must exist
+            if (!c.department) throw new Error('Department is required');
+            if (!validDeptCodes.has(c.department.trim().toUpperCase())) {
+                throw new Error(`Department "${c.department}" does not exist. Add it in Setup → Departments first.`);
+            }
+
+            // Validate venue — optional but must exist if provided
+            if (c.venue && c.venue.trim() !== '') {
+                if (!validVenueNames.has(c.venue.trim())) {
+                    throw new Error(`Venue "${c.venue}" does not exist. Add it in Setup → Venues first.`);
+                }
+            }
+
+            // Validate lecturers — optional but each name must exist if provided
+            const lecturerList = Array.isArray(c.lecturers)
+                ? c.lecturers
+                : (c.lecturers ? String(c.lecturers).split(',').map(l => l.trim()).filter(Boolean) : []);
+            for (const lname of lecturerList) {
+                if (lname && !validLecturerNames.has(lname)) {
+                    throw new Error(`Lecturer "${lname}" does not exist. Add them in Setup → Lecturers first.`);
+                }
+            }
+
+            const durationInMinutes = durationHoursToMinutes(c.duration);
             let college = null;
             if (c.timetable_id) {
                 const timetableRow = await timetablesRepo.getRawById(c.timetable_id);
@@ -1135,7 +1314,7 @@ app.post('/api/courses/bulk', requireAdmin, async (req, res) => {
                 college,
                 department: c.department,
                 level: c.level,
-                lecturers: Array.isArray(c.lecturers) ? c.lecturers : (c.lecturers ? String(c.lecturers).split(',').map(l => l.trim()) : []),
+                lecturers: lecturerList,
                 units: c.units,
                 semester: c.semester || 'First',
                 type: c.type || 'Lecture',
@@ -1151,11 +1330,11 @@ app.post('/api/courses/bulk', requireAdmin, async (req, res) => {
             }
             addedCount++;
         } catch (err) {
-            errors.push(`Row ${i + 1} (${c.code}): ${err.message}`);
+            errors.push(`Row ${i + 1} (${c.code || 'unknown'}): ${err.message}`);
         }
     }
 
-    res.json({ message: `Successfully added ${addedCount} courses.`, addedCount, errors });
+    res.json({ message: `Successfully added ${addedCount} of ${courses.length} courses.`, addedCount, errors });
 });
 
 // Get all courses
@@ -1209,7 +1388,7 @@ app.get('/api/courses/:id', (req, res) => {
 app.put('/api/courses/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { code, title, department, level, lecturers, units, semester, type, is_compulsory, preferred_day, preferred_time, venue, duration, custom_data } = req.body;
-    const durationInMinutes = parseFloat(duration) * 60;
+    const durationInMinutes = durationHoursToMinutes(duration);
 
     coursesRepo.getById(id)
         .then((existing) => {
@@ -1422,7 +1601,14 @@ app.post('/api/timetables/:id/duplicate', requireAdmin, (req, res) => {
 });
 
 // Generate Timetable (Creates NEW entry)
-const { generateLectureSchedule, generateExamSchedule, generateTestSchedule } = require('./ai/scheduler');
+const {
+    generateLectureSchedule,
+    generateExamSchedule,
+    generateTestSchedule,
+    attachUnscheduledReasons,
+    generateQualityReport,
+    reoptimizeAround,
+} = require('./ai/scheduler');
 
 const handleGenerate = async (req, res, generateFn, type) => {
     const { timetable_id, scope = 'college', department = null, level = null, semester = null } = req.body;
@@ -1489,12 +1675,26 @@ const handleGenerate = async (req, res, generateFn, type) => {
         };
 
         const schedule = await generateFn(courses, filterOptions);
-        const generatedData = Array.isArray(schedule)
-            ? { scheduled: schedule, unscheduled: [] }
-            : {
-                scheduled: Array.isArray(schedule?.scheduled) ? schedule.scheduled : [],
-                unscheduled: Array.isArray(schedule?.unscheduled) ? schedule.unscheduled : []
-            };
+        const rawScheduled   = Array.isArray(schedule) ? schedule : (schedule?.scheduled || []);
+        const rawUnscheduled = Array.isArray(schedule) ? [] : (schedule?.unscheduled || []);
+
+        const slots = filterOptions.venues !== undefined
+            ? (() => {
+                const rules      = filterOptions.rules || {};
+                const startHour  = Number(rules.default_start_hour || 9);
+                const endHour    = Number(rules.default_end_hour   || 18);
+                const DAYS_LIST  = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
+                const TIMES_LIST = ['9:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00']
+                    .filter(t => { const h = Number(t.split(':')[0]); return h >= startHour && h < endHour; });
+                return DAYS_LIST.flatMap(d => TIMES_LIST.map(t => ({ day: d, time: t })));
+            })()
+            : [];
+
+        const unscheduledWithReasons = attachUnscheduledReasons(rawScheduled, rawUnscheduled, slots);
+        const maxDailyHours = Number((filterOptions.rules || {}).max_daily_hours_per_level || 6);
+        const report = generateQualityReport(rawScheduled, unscheduledWithReasons, filterOptions.venues || [], maxDailyHours);
+
+        const generatedData = { scheduled: rawScheduled, unscheduled: unscheduledWithReasons };
         const finalData = JSON.stringify(generatedData);
 
         await timetablesRepo.updateGeneratedDataById(timetable_id, finalData);
@@ -1503,7 +1703,8 @@ const handleGenerate = async (req, res, generateFn, type) => {
         res.json({
             message: `${type} timetable generated`,
             id: timetable_id,
-            data: generatedData
+            data: generatedData,
+            report,
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1516,7 +1717,10 @@ app.post('/api/generate/tests', requireAdmin, (req, res) => handleGenerate(req, 
 
 // Validate Timetable Move
 app.post('/api/timetables/validate', requireAdmin, (req, res) => {
-    const { schedule, course, day, time } = req.body;
+    const { schedule, course, day, time } = req.body || {};
+    if (!Array.isArray(schedule) || !course || typeof course !== 'object' || !day || !time) {
+        return res.status(400).json({ error: 'schedule (array), course, day, and time are required' });
+    }
     const { hasConflict } = require('./ai/scheduler');
 
     // Check if the move creates a conflict
@@ -1527,6 +1731,56 @@ app.post('/api/timetables/validate', requireAdmin, (req, res) => {
     res.json({ valid: !conflict });
 });
 
+
+// Reoptimize after a manual override
+// Body: { lockedCourse, scheduled, unscheduled }
+// Locks the moved course, re-runs ALNS on the affected lecturer/group subset.
+app.post('/api/timetables/:id/reoptimize', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const { lockedCourse, scheduled: currentScheduled, unscheduled: currentUnscheduled } = req.body;
+
+    if (!lockedCourse || !lockedCourse.day || !lockedCourse.time) {
+        return res.status(400).json({ error: 'lockedCourse with day and time is required' });
+    }
+
+    try {
+        const timetableRow = await timetablesRepo.getRawById(id);
+        if (!timetableRow) return res.status(400).json({ error: 'Timetable not found' });
+
+        const rules     = await getActiveRules();
+        const venues    = await adminRepo.listVenues();
+        const startHour = Number((rules || {}).default_start_hour || 9);
+        const endHour   = Number((rules || {}).default_end_hour   || 18);
+        const maxDailyHours = Number((rules || {}).max_daily_hours_per_level || 6);
+
+        const DAYS_LIST  = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
+        const TIMES_LIST = ['9:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00']
+            .filter(t => { const h = Number(t.split(':')[0]); return h >= startHour && h < endHour; });
+        const slots = DAYS_LIST.flatMap(d => TIMES_LIST.map(t => ({ day: d, time: t })));
+
+        const filteredVenues = venues.filter(v => !v.college_code || v.college_code === timetableRow.college);
+
+        const { scheduled: newScheduled, unscheduled: newUnscheduled } = reoptimizeAround(
+            lockedCourse,
+            currentScheduled || [],
+            currentUnscheduled || [],
+            slots,
+            filteredVenues,
+            maxDailyHours
+        );
+
+        const unscheduledWithReasons = attachUnscheduledReasons(newScheduled, newUnscheduled, slots);
+        const report = generateQualityReport(newScheduled, unscheduledWithReasons, filteredVenues, maxDailyHours);
+
+        const data = { scheduled: newScheduled, unscheduled: unscheduledWithReasons };
+        await timetablesRepo.updateDataById(id, JSON.stringify(data));
+
+        writeAuditLog('REOPTIMIZE', 'timetable', id, `locked=${lockedCourse.code} ${lockedCourse.day} ${lockedCourse.time}`, req.ip);
+        res.json({ data, report });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // Save Timetable (Specific ID)
 app.post('/api/timetables/:id/save', requireAdmin, (req, res) => {
@@ -1550,12 +1804,6 @@ app.post('/api/timetables/:id/clear-unscheduled', requireAdmin, async (req, res)
 
         const currentData = row.data;
         const scheduled = Array.isArray(currentData) ? currentData : (currentData.scheduled || []);
-        const unscheduled = Array.isArray(currentData) ? [] : (currentData.unscheduled || []);
-
-        // Unassign courses that are only in unscheduled (not placed in the grid),
-        // so the injection logic on reload won't re-add them.
-        const scheduledIds = new Set(scheduled.map(c => c.id).filter(Boolean));
-        const toUnassign = unscheduled.map(c => c.id).filter(id => id && !scheduledIds.has(id));
 
         // cleared_unscheduled flag tells the frontend injection logic not to re-add
         // these courses on reload. Generating a new schedule produces fresh data without
@@ -1574,8 +1822,13 @@ app.get('/api/timetables/latest/:type', (req, res) => {
     timetablesRepo.getLatestByType(type)
         .then((row) => {
             if (row) {
-                const parsed = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
-                return res.json({ data: parsed, meta: row });
+                let parsed;
+                try {
+                    parsed = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+                } catch {
+                    parsed = { scheduled: [], unscheduled: [] };
+                }
+                return res.json({ data: parsed || { scheduled: [], unscheduled: [] }, meta: row });
             }
             return res.json({ data: { scheduled: [], unscheduled: [] } });
         })
@@ -1613,7 +1866,7 @@ app.get('/api/timetables/:id/export', async (req, res) => {
         if (format === 'excel') {
             const buffer = await buildExcelGrid(rows, timetable.name || 'Timetable');
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            res.setHeader('Content-Disposition', `attachment; filename=${baseName}.xlsx`);
+            res.setHeader('Content-Disposition', contentDispositionFor(`${baseName}.xlsx`));
             return res.send(buffer);
         }
 
@@ -1626,7 +1879,7 @@ app.get('/api/timetables/:id/export', async (req, res) => {
                 (pdfBuffer) => {
                     if (!res.headersSent) {
                         res.setHeader('Content-Type', 'application/pdf');
-                        res.setHeader('Content-Disposition', `attachment; filename=${baseName}.pdf`);
+                        res.setHeader('Content-Disposition', contentDispositionFor(`${baseName}.pdf`));
                         res.send(pdfBuffer);
                     }
                 },
@@ -1646,7 +1899,7 @@ app.get('/api/timetables/:id/export', async (req, res) => {
                 `Department: ${department || 'All'} | Level: ${level || 'All'}`
             );
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-            res.setHeader('Content-Disposition', `attachment; filename=${baseName}.docx`);
+            res.setHeader('Content-Disposition', contentDispositionFor(`${baseName}.docx`));
             return res.send(buffer);
         }
 

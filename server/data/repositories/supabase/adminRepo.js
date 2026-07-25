@@ -207,6 +207,38 @@ const deleteVenue = async (id) => {
     return { changes: 1 };
 };
 
+const bulkCreateColleges = async (rows) => {
+    const supabase = getSupabaseClient();
+    const payload = rows.map(r => ({ code: r.code, name: r.name, is_active: true }));
+    const { error } = await supabase.from('colleges').insert(payload);
+    if (error) throw new Error(error.message || 'Supabase bulkCreateColleges failed');
+    return { count: payload.length };
+};
+
+const bulkCreateDepartments = async (rows) => {
+    const supabase = getSupabaseClient();
+    const payload = rows.map(r => ({ code: r.code, name: r.name, college_code: r.college_code || null, is_active: true }));
+    const { error } = await supabase.from('departments').insert(payload);
+    if (error) throw new Error(error.message || 'Supabase bulkCreateDepartments failed');
+    return { count: payload.length };
+};
+
+const bulkCreateVenues = async (rows) => {
+    const supabase = getSupabaseClient();
+    const payload = rows.map(r => ({ name: r.name, college_code: r.college_code || null, capacity: Number(r.capacity || 0) }));
+    const { error } = await supabase.from('venues').insert(payload);
+    if (error) throw new Error(error.message || 'Supabase bulkCreateVenues failed');
+    return { count: payload.length };
+};
+
+const bulkCreateLecturers = async (rows) => {
+    const supabase = getSupabaseClient();
+    const payload = rows.map(r => ({ name: r.name, department_code: r.department_code || null, email: r.email || null }));
+    const { error } = await supabase.from('lecturers').insert(payload);
+    if (error) throw new Error(error.message || 'Supabase bulkCreateLecturers failed');
+    return { count: payload.length };
+};
+
 const updateRule = async (id, { name, rule_key, rule_value, is_active = 1 }) => {
     const supabase = getSupabaseClient();
     const { error } = await supabase
@@ -215,6 +247,29 @@ const updateRule = async (id, { name, rule_key, rule_value, is_active = 1 }) => 
         .eq('id', id);
 
     if (error) throw new Error(error.message || 'Supabase updateRule failed');
+    return { changes: 1 };
+};
+
+const createRule = async ({ name, rule_key, rule_value, is_active = 1 }) => {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+        .from('scheduling_rules')
+        .insert([{ name, rule_key, rule_value: String(rule_value), is_active: !!is_active }])
+        .select('id')
+        .single();
+
+    if (error) throw new Error(error.message || 'Supabase createRule failed');
+    return { lastID: data.id };
+};
+
+const deleteRule = async (id) => {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+        .from('scheduling_rules')
+        .delete()
+        .eq('id', id);
+
+    if (error) throw new Error(error.message || 'Supabase deleteRule failed');
     return { changes: 1 };
 };
 const getOptions = async () => {
@@ -272,5 +327,11 @@ module.exports = {
     updateVenue,
     deleteVenue,
     updateRule,
+    createRule,
+    deleteRule,
+    bulkCreateColleges,
+    bulkCreateDepartments,
+    bulkCreateVenues,
+    bulkCreateLecturers,
     getOptions
 };
